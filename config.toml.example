@@ -1,0 +1,31 @@
+image_filename = "frames/frame.png"
+
+[stream]
+stream_url = 'https://www.youtube.com/watch?v=vMruQGW0LqI'
+only_keyframes = true
+
+[detection]
+minimum_detection_percentage = 75
+minimum_detection_frames = 5
+api_url = 'http://localhost:8000/detect'
+ignore_points = [
+    
+]
+
+[output]
+messages = [
+    "Norppa on kivellä!",
+]
+
+[twitter]
+twitter_token = ""
+token_secret = ""
+twitter_consumer_key = ""
+twitter_consumer_secret = ""
+
+[mastodon]
+mastodon_host = ""
+mastodon_token = ""
+
+[bluesky]
+
