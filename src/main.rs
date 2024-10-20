@@ -180,7 +180,3 @@ fn save_file(frame: &Video, filename: &str) -> Result<(), String> {
         .map_err(|err| format!("Could not save image: {}", err))?;
     Ok(())
 }
-
-// fn add_bounding_boxes_to_image(frame: &mut Video, rects: Vec<u8[4]>) {
-//     imageproc::drawing::draw_hollow_rect_mut(&frame, imageproc::rect::Rect::at(0, 0).of_size(100, 100), image::Rgb([255, 0, 0]);
-// }
