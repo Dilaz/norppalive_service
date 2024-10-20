@@ -11,11 +11,11 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
+    - name: Install ffmpeg
+      run: sudo apt-get install ffmpeg
     - name: Build
       run: cargo build --verbose
     - name: Run tests
