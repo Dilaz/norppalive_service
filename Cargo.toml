@@ -6,22 +6,26 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ab_glyph = "0.2.26"
-atrium-xrpc-client = { version = "0.5.2", features = ["reqwest"] }
+ab_glyph = "0.2.28"
+atrium-api = "0.24.6"
+atrium-xrpc-client = { version = "0.5.8", features = ["reqwest"] }
+base64 = "0.22.1"
 chrono = "0.4.38"
 clap = { version = "4.5.4", features = ["derive"] }
-ffmpeg-next = "7.0.0"
-image = "0.25.1"
-imageproc = "0.24.0"
-lazy_static = "1.4.0"
-megalodon = "0.13.5"
+ffmpeg-next = "7.0.4"
+image = "0.25.2"
+imageproc = "0.25.0"
+ipld-core = { version = "0.4.1", features = ["serde"] }
+lazy_static = "1.5.0"
+megalodon = "0.13.9"
 rand = "0.8.5"
-reqwest = { version = "0.11", features = ["multipart", "json", "blocking", "stream"] }
-serde = { version = "1.0.202", features = ["derive"] }
-serde_json = "1.0.117"
-tokio = { version = "1.37.0", features = ["full"] }
-tokio-util = "0.7.11"
-toml = "0.8.12"
+reqwest = { version = "0.12.8", features = ["multipart", "json", "blocking", "stream"] }
+reqwest_old = { version = "0.11", features = ["multipart", "json", "blocking", "stream"], package = "reqwest" }
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+tokio = { version = "1.40.0", features = ["full"] }
+tokio-util = "0.7.12"
+toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 twitter-api-v1 = { version = "0.2.1", features = ["tokio", "with_tokio_fs"] }

@@ -28,4 +28,7 @@ mastodon_host = ""
 mastodon_token = ""
 
 [bluesky]
-
+host = "https://bsky.social"
+login = ""
+handle = "username.bsky.social"
+password = ""

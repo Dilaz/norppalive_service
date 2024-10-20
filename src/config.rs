@@ -31,7 +31,7 @@ pub struct Point {
     pub y: u32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub enum Service {
     Twitter,
     Mastodon,
@@ -68,6 +68,7 @@ pub struct Mastodon {
 #[derive(Deserialize, Debug)]
 pub struct Bluesky {
     pub host: String,
+    pub login: String,
     pub handle: String,
     pub password: String,
 }
