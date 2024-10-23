@@ -5,9 +5,7 @@ use crate::CONFIG;
 
 use super::SocialMediaService;
 
-pub struct MastodonService {
-    // Add your Mastodon service fields here
-}
+pub struct MastodonService;
 
 impl MastodonService {
     pub fn new() -> Self {

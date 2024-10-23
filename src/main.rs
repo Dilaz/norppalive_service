@@ -4,7 +4,7 @@ use std::mem;
 use std::time::Duration;
 
 use clap::{command, Parser};
-use ffmpeg::format::{input, stream, Pixel};
+use ffmpeg::format::{input, Pixel};
 use ffmpeg::media::Type;
 use ffmpeg::software::scaling::{Context, Flags};
 use ffmpeg::util::frame::video::Video;

@@ -1,11 +1,16 @@
+use enum_dispatch::enum_dispatch;
+
 use super::{BlueskyService, MastodonService, TwitterService};
 
+#[enum_dispatch(ServiceType)]
 pub trait SocialMediaService {
-    fn post(&self, message: &str, image_path: &str) -> impl std::future::Future<Output = Result<(), String>> + Send;
+    #[allow(async_fn_in_trait)]
+    async fn post(&self, message: &str, image_path: &str) -> Result<(), String>;
 }
 
+#[enum_dispatch]
 pub enum ServiceType {
-    Twitter(TwitterService),
-    Mastodon(MastodonService),
-    Bluesky(BlueskyService),
+    TwitterService,
+    MastodonService,
+    BlueskyService,
 }

@@ -8,8 +8,7 @@ use crate::CONFIG;
 
 use super::SocialMediaService;
 
-pub struct TwitterService {
-}
+pub struct TwitterService;
 
 impl SocialMediaService for TwitterService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), String> {

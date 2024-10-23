@@ -12,6 +12,7 @@ atrium-xrpc-client = { version = "0.5.8", features = ["reqwest"] }
 base64 = "0.22.1"
 chrono = "0.4.38"
 clap = { version = "4.5.4", features = ["derive"] }
+enum_dispatch = "0.3.13"
 ffmpeg-next = "7.0.4"
 image = "0.25.2"
 imageproc = "0.25.0"

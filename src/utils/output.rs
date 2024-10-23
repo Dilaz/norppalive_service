@@ -10,21 +10,21 @@ pub struct OutputService {
 
 impl OutputService {
     pub fn new() -> Self {
-        let mut output_services = vec![];
+        let mut output_services: Vec<ServiceType> = vec![];
 
         for service in &CONFIG.output.services {
             match service {
                 Service::Twitter => {
                     info!("Adding Twitter service");
-                    output_services.push(ServiceType::Twitter(TwitterService::new()));
+                    output_services.push(TwitterService::new().into());
                 }
                 Service::Mastodon => {
                     info!("Adding Mastodon service");
-                    output_services.push(ServiceType::Mastodon(MastodonService::new()));
+                    output_services.push(MastodonService::new().into());
                 }
                 Service::Bluesky => {
                     info!("Adding Bluesky service");
-                    output_services.push(ServiceType::Bluesky(BlueskyService::new()));
+                    output_services.push(BlueskyService::new( ).into());
                 }
             }
         }
@@ -50,23 +50,12 @@ impl OutputService {
         let message = messages.get(rand::thread_rng().gen_range(0..messages.len())).unwrap();
 
         for service in self.output_services.iter() {
-            match service {
-                ServiceType::Twitter(twitter_service) => {
-                    twitter_service.post(&message, &image_path).await?;
-                }
-                ServiceType::Mastodon(mastodon_service) => {
-                    mastodon_service.post(&message, &image_path).await?;
-                }
-                ServiceType::Bluesky(bluesky_service) => {
-                    bluesky_service.post(&message, &image_path).await?;
-                }
-            }
+           service.post(message, &image_path).await?;
         }
 
         Ok(())
     }
 }
-
 
 // async fn read_from_kvstore(key: &str) -> Result<String, String> {
 //     let client = reqwest::Client::new();
