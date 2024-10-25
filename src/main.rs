@@ -110,7 +110,9 @@ async fn main() -> Result<(), String> {
         }
         Ok(())
     };
-    tokio::spawn(async {
+
+    // Spawn a new thread to do the detections in so it doesn't mess with ffmpeg
+    let detection_thread = tokio::spawn(async {
         // Create a detection service
         let mut detection_service = utils::detection_utils::DetectionService::new();
         let filename = CONFIG.image_filename.clone();
@@ -146,6 +148,11 @@ async fn main() -> Result<(), String> {
     }
     info!("Shutting down");
     SHUTDOWN.store(true, Release);
+
+    // Wait for the detection thread to shut down
+    detection_thread.await.unwrap();
+
+    // Send EOF signal to the decoder
     decoder.send_eof().map_err(|err| format!("Could not send EOF to stream: {}", err))?;
 
     Ok(())
