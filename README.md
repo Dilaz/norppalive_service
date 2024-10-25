@@ -49,7 +49,7 @@ Fill in the `config.toml` file with the necessary information. Refer to the comm
 
 ## Usage
 
-This is part of the implementation that captures frames from Norppalive livestream and sends them to the [detector](https://github.com/Dilaz/Norppalivebot_detector)
+This is part of the implementation that captures frames from Norppalive livestream and sends them to the [Norppa-API](https://github.com/Dilaz/Norppa-API)
 
 To start detector, run:
 ```sh
