@@ -14,8 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Install ffmpeg
-      run: sudo apt-get install ffmpeg
+    - name: Install ffmpeg and libavutil
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libavutil-dev pkg-config libavformat-dev libavfilter-dev libavdevice-dev
+    - name: Set PKG_CONFIG_PATH
+      run: echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
     - name: Build
       run: cargo build --verbose
     - name: Run tests
