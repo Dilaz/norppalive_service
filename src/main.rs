@@ -57,11 +57,14 @@ async fn main() -> Result<(), String> {
     // Set log level to suppress FFmpeg logs
     ffmpeg::log::set_level(ffmpeg::log::Level::Quiet);
 
+    // Get the actual stream url from Youtube using yt-dlp
     let stream_url = get_stream_url(&CONFIG.stream.stream_url).map_err(|err| format!("Could not get stream URL: {}", err))?;
     if stream_url.is_empty() {
         return Err("Could not get stream url".to_string());
     }
     info!("Stream URL: {}", stream_url);
+
+    // Select the best video quality stream
     let mut ictx = input(&stream_url).map_err(|err| format!("{}", err))?;
     let input = ictx
         .streams()
@@ -70,8 +73,13 @@ async fn main() -> Result<(), String> {
 
     let video_stream_index = input.index();
 
+    // Create a decoder
     let mut decoder = input.codec().decoder().video().map_err(|err| format!("{}", err))?;
-    decoder.skip_frame(Discard::NonKey);
+
+    // We can skip everything else and only detect from keyframes (which is recommended)
+    if CONFIG.stream.only_keyframes {
+        decoder.skip_frame(Discard::NonKey);
+    }
 
     let mut scaler = Context::get(
         decoder.format(),
@@ -87,6 +95,7 @@ async fn main() -> Result<(), String> {
     let mut frame_index = 0u64;
     let mut skipped = 0u64;
 
+    // Callback function for the received frames
     let mut receive_and_process_decoded_frames =
     |decoder: &mut ffmpeg::decoder::Video| -> Result<(), String> {
         let mut decoded = Video::empty();
@@ -116,6 +125,8 @@ async fn main() -> Result<(), String> {
         // Create a detection service
         let mut detection_service = utils::detection_utils::DetectionService::new();
         let filename = CONFIG.image_filename.clone();
+
+        // If global SHUTDOWN is set, just stop
         while !SHUTDOWN.load(Relaxed) {
             SAVE_IMAGE.store(true, Relaxed);
             info!("Waiting for new image...");
@@ -136,6 +147,7 @@ async fn main() -> Result<(), String> {
         mem::drop(filename);
     });
 
+    // Start reading packets from the stream
     for (stream, packet) in ictx.packets() {
         if stream.index() == video_stream_index {
             decoder.send_packet(&packet).map_err(|err| format!("Could not send package to decoder: {}", err))?;
