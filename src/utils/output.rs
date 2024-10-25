@@ -47,10 +47,15 @@ impl OutputService {
 
         // Get a random message
         let messages = &CONFIG.output.messages;
-        let message = messages.get(rand::thread_rng().gen_range(0..messages.len())).unwrap();
+        let mut message = messages.get(rand::thread_rng().gen_range(0..messages.len())).unwrap().to_owned();
+
+        // Replace # with something else if needed, for debugging
+        if CONFIG.output.replace_hashtags {
+            message = message.replace("#", "häsitäägi-");
+        }
 
         for service in self.output_services.iter() {
-           service.post(message, &image_path).await?;
+           service.post(&message, &image_path).await?;
         }
 
         Ok(())

@@ -9,12 +9,28 @@ minimum_detection_percentage = 75
 minimum_detection_frames = 5
 api_url = 'http://localhost:8000/detect'
 ignore_points = [
-    
+    {x = 0, y = 0},
 ]
+minimum_x = 0
+maximum_x = 1200
+minimum_y = 0
+maximum_y = 720
 
 [output]
+post_interval = 120 # How often to post in minutes
+image_save_interval = 10 # How often to save the image in minutes
+line_color = [255, 112, 32, 1]
+text_color = [0, 0, 0, 1]
+line_thickness = 5
+output_file_folder = "saved_images"
+replace_hashtags = false # If '#' should be replaced with 'hashtag-'
 messages = [
     "Norppa on kivellä!",
+]
+services = [
+    # "Twitter",
+    # "Mastodon",
+    # "Bluesky"
 ]
 
 [twitter]
