@@ -8,6 +8,7 @@ use crate::CONFIG;
 
 use super::SocialMediaService;
 
+#[derive(Debug, Default)]
 pub struct TwitterService;
 
 impl SocialMediaService for TwitterService {
@@ -43,7 +44,7 @@ impl TwitterService {
         ).await
         .map_err(|err| format!("Error uploading image to Twitter: {}", err))?;
     
-        return match res {
+        match res {
             EndpointRet::Ok(res) => Ok(res.media_id),
             EndpointRet::Other(err) => {
                 error!("Error uploading image to Twitter: {:?}", err);
@@ -53,15 +54,6 @@ impl TwitterService {
                 error!("Error uploading image to Twitter: Unknown error");
                 Err("Unknown error".into())
             }
-        };
-    }
-
-    /**
-     * Creates a new Twitter service
-     */
-    pub fn new() -> Self {
-        Self {
-            // Initialize your Twitter service fields here
         }
     }
 }

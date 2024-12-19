@@ -48,6 +48,7 @@ where
     Ok((f * 100.0) as u8)
 }
 
+#[derive(Default)]
 pub struct DetectionService {
     output_service: OutputService,
     last_post_time: i64,
@@ -96,8 +97,8 @@ impl DetectionService {
         Ok(vec![])
     }
 
-    pub async fn process_detection(&mut self, detection_result: &Vec<DetectionResult>, detections_in_row: u32) -> Option<u32> {
-        if detection_result.len() == 0 {
+    pub async fn process_detection(&mut self, detection_result: &[DetectionResult], detections_in_row: u32) -> Option<u32> {
+        if detection_result.is_empty() {
             debug!("No detections");
             return None;
         }
@@ -109,22 +110,22 @@ impl DetectionService {
             .iter()
             .filter(|detection| detection.conf > CONFIG.detection.minimum_detection_percentage)
             .filter(|detection| {
-                return ignore_points_iter.all(|ignore_point| {
-                    let x = ignore_point.x as u32;
-                    let y = ignore_point.y as u32;
+                ignore_points_iter.all(|ignore_point| {
+                    let x = ignore_point.x;
+                    let y = ignore_point.y;
                     let box_x = detection.r#box[0];
                     let box_y = detection.r#box[1];
                     let box_width = detection.r#box[2];
                     let box_height = detection.r#box[3];
-                    return x < box_x
+                    x < box_x
                         || x > box_x + box_width
                         || y < box_y
-                        || y > box_y + box_height;
-                });
+                        || y > box_y + box_height
+                })
             })
             .collect();
 
-        if acceptable_detections.len() == 0 {
+        if acceptable_detections.is_empty() {
             debug!("No acceptable detections");
             return None;
         }
@@ -137,7 +138,7 @@ impl DetectionService {
 
         self.last_detection_time = Local::now().timestamp();
 
-        if self.should_post(detections_in_row).await {
+        if self.should_post(detections_in_row) {
             info!("Posting to social media");
             if let Ok(image) = draw_boxes_on_image(&acceptable_detections) {
                 if let Err(err) = self.output_service.post_to_social_media(image).await {
@@ -148,7 +149,7 @@ impl DetectionService {
             } else {
                 error!("Could not draw boxes on image");
             }
-        } else if self.should_save_image().await {
+        } else if self.should_save_image() {
             info!("Saving image to a file!");
             if let Ok(image) = draw_boxes_on_image(&acceptable_detections) {
                 let timestamp = Local::now().to_string();
@@ -174,17 +175,21 @@ impl DetectionService {
     /**
      * Checks if we should post to social media
      */
-    async fn should_post(&self, detections_in_row: u32) -> bool {
-        return (self.last_post_time == 0
+    fn should_post(&self, detections_in_row: u32) -> bool {
+        (self.last_post_time == 0
         || (self.last_post_time + CONFIG.output.post_interval * 60) < Local::now().timestamp())
-        && detections_in_row >= CONFIG.detection.minimum_detection_frames;
+        && detections_in_row >= CONFIG.detection.minimum_detection_frames
     }
 
     /**
      * Checks if we should save the image
      */
-    async fn should_save_image(&self) -> bool {
-        return self.last_image_save_time == 0
-        || (self.last_image_save_time + CONFIG.output.image_save_interval  * 60) < Local::now().timestamp();
+    fn should_save_image(&self) -> bool {
+        debug!("Last image save time: {}, current time: {}, image_save_interval: {}", self.last_image_save_time, Local::now().timestamp(), CONFIG.output.image_save_interval  * 60);
+        debug!("Should save image: {}", self.last_image_save_time == 0 || (self.last_image_save_time + CONFIG.output.image_save_interval  * 60) < Local::now().timestamp());
+        debug!("Time until next image save: {}", (self.last_image_save_time + CONFIG.output.image_save_interval  * 60) - Local::now().timestamp());
+
+        self.last_image_save_time == 0
+        || (self.last_image_save_time + CONFIG.output.image_save_interval  * 60) < Local::now().timestamp()
     }
 }

@@ -30,7 +30,7 @@ impl SocialMediaService for BlueskyService {
             info!("Logged in to Bluesky");
         }
 
-        let blob_ref = self.upload_image(&image_path).await?;
+        let blob_ref = self.upload_image(image_path).await?;
 
         // Post the message to Bluesky
         let record_data = Object::<InputData> {
@@ -85,8 +85,8 @@ impl SocialMediaService for BlueskyService {
     }
 }
 
-impl BlueskyService {
-    pub fn new() -> Self {
+impl Default for BlueskyService {
+    fn default() -> Self {
         Self {
             agent: AtpAgent::new(
                 ReqwestClient::new(&CONFIG.bluesky.host),
@@ -95,7 +95,9 @@ impl BlueskyService {
             is_logged_in: false,
         }
     }
-
+}
+    
+impl BlueskyService {
     async fn login(&self) -> Result<(), String> {
         let _login = self.agent.login(&CONFIG.bluesky.login, &CONFIG.bluesky.password).await
             .map_err(|err| format!("Error logging in to Bluesky: {:?}", err))?;

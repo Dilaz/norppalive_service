@@ -2,28 +2,29 @@ use chrono::Utc;
 use image::DynamicImage;
 use rand::prelude::*;
 use tracing::info;
-use crate::{config::Service, services::{BlueskyService, MastodonService, ServiceType, SocialMediaService, TwitterService}, CONFIG};
+use crate::{config::Service, services::{BlueskyService, MastodonService, ServiceType, SocialMediaService, TwitterService, KafkaService}, CONFIG};
 
 pub struct OutputService {
     output_services: Vec<ServiceType>,
 }
 
-impl OutputService {
-    pub fn new() -> Self {
+impl Default for OutputService {
+    fn default() -> Self {
         let mut output_services: Vec<ServiceType> = vec![];
 
         for service in &CONFIG.output.services {
             match service {
                 Service::Twitter => {
                     info!("Adding Twitter service");
-                    output_services.push(TwitterService::new().into());
+                    output_services.push(TwitterService.into());
                 }
                 Service::Mastodon => {
                     info!("Adding Mastodon service");
-                    output_services.push(MastodonService::new().into());
+                    output_services.push(MastodonService.into());
                 }
                 Service::Bluesky => {
                     info!("Adding Bluesky service");
+                    output_services.push(BlueskyService::default().into());
                 }
                 Service::Kafka => {
                     info!("Adding Kafka service");
@@ -38,7 +39,8 @@ impl OutputService {
             output_services,
         }
     }
-
+}
+impl OutputService {
     pub async fn post_to_social_media(&self, image: DynamicImage) -> Result<(), String> {
         let services = &CONFIG.output.services;
 
@@ -57,8 +59,13 @@ impl OutputService {
             message = message.replace("#", "häsitäägi-");
         }
 
-        for service in self.output_services.iter() {
-           service.post(&message, &image_path).await?;
+        let futures = self.output_services.iter()
+            .map(|service| service.post(&message, &image_path));
+
+        for future in futures {
+            async {
+                let _ = future.await.map_err(|err| format!("Error posting to social media: {}", err));
+            }.await;
         }
 
         Ok(())

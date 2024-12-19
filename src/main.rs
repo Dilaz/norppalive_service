@@ -32,11 +32,11 @@ struct Args {
 }
 
 lazy_static! {
-    static ref ARGS: Args = Args::parse();
-    static ref SHUTDOWN: AtomicBool = AtomicBool::new(false);
-    static ref CONFIG: Config =  toml::from_str(&std::fs::read_to_string(&ARGS.config).unwrap()).unwrap();
-    static ref SAVE_IMAGE: AtomicBool = AtomicBool::new(true);
-    static ref LAST_POST_TIME: AtomicI64 = AtomicI64::new(0);
+    static ref ARGS: Args                      = Args::parse();
+    static ref SHUTDOWN: AtomicBool            = AtomicBool::new(false);
+    static ref CONFIG: Config                  = toml::from_str(&std::fs::read_to_string(&ARGS.config).unwrap()).unwrap();
+    static ref SAVE_IMAGE: AtomicBool          = AtomicBool::new(true);
+    static ref LAST_POST_TIME: AtomicI64       = AtomicI64::new(0);
     static ref LAST_IMAGE_SAVE_TIME: AtomicI64 = AtomicI64::new(0);
 }
 
@@ -123,8 +123,9 @@ async fn main() -> Result<(), String> {
     // Spawn a new thread to do the detections in so it doesn't mess with ffmpeg
     let detection_thread = tokio::spawn(async {
         // Create a detection service
-        let mut detection_service = utils::detection_utils::DetectionService::new();
+        let mut detection_service = utils::detection_utils::DetectionService::default();
         let filename = CONFIG.image_filename.clone();
+        let mut detections_in_row = 0;
 
         // If global SHUTDOWN is set, just stop
         while !SHUTDOWN.load(Relaxed) {
@@ -139,7 +140,9 @@ async fn main() -> Result<(), String> {
             match detection_result {
                 Ok(detection_result) => {
                     debug!("Detection result: {:?}", detection_result);
-                    detection_service.process_detection(&detection_result).await;
+                    // Update detection count
+                    detections_in_row = detection_service.process_detection(&detection_result, detections_in_row).await.unwrap_or(0);
+                    debug!("Detections in row: {}", detections_in_row);
                 },
                 Err(err) => error!("Error while detecting stuff: {}", err),
             }
@@ -195,7 +198,7 @@ fn get_stream_url(stream_url: &str) -> Result<String, std::io::Error> {
  * Save the frame to a file
  */
 fn save_file(frame: &Video, filename: &str) -> Result<(), String> {
-    image::save_buffer(format!("{}", filename), frame.data(0), frame.width(), frame.height(), image::ExtendedColorType::Rgb8)
+    image::save_buffer(filename, frame.data(0), frame.width(), frame.height(), image::ExtendedColorType::Rgb8)
         .map_err(|err| format!("Could not save image: {}", err))?;
     Ok(())
 }

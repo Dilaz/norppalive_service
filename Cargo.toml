@@ -7,28 +7,29 @@ edition = "2021"
 
 [dependencies]
 ab_glyph = "0.2.28"
-atrium-api = "0.24.6"
-atrium-xrpc-client = { version = "0.5.8", features = ["reqwest"] }
+atrium-api = "0.24.9"
+atrium-xrpc-client = { version = "0.5.10", features = ["reqwest"] }
 base64 = "0.22.1"
-chrono = "0.4.38"
-clap = { version = "4.5.4", features = ["derive"] }
+chrono = "0.4.39"
+clap = { version = "4.5.23", features = ["derive"] }
 enum_dispatch = "0.3.13"
 ffmpeg-next = "7.0.4"
-image = "0.25.2"
+image = "0.25.5"
 imageproc = "0.25.0"
 ipld-core = { version = "0.4.1", features = ["serde"] }
 lazy_static = "1.5.0"
-megalodon = "0.13.9"
+megalodon = "0.14.1"
 rand = "0.8.5"
-rdkafka = "0.36.2"
+rdkafka = "0.37.0"
 reqwest = { version = "0.12.9", features = ["multipart", "json", "blocking", "stream"] }
-serde = { version = "1.0.210", features = ["derive"] }
-serde_json = "1.0.128"
-tokio = { version = "1.40.0", features = ["full"] }
-tokio-util = "0.7.12"
+reqwest_old = { version = "0.11.27", features = ["multipart", "json", "blocking", "stream"], package = "reqwest" }
+serde = { version = "1.0.216", features = ["derive"] }
+serde_json = "1.0.133"
+tokio = { version = "1.42.0", features = ["full"] }
+tokio-util = "0.7.13"
 toml = "0.8.19"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 twitter-api-v1 = { version = "0.2.1", features = ["tokio", "with_tokio_fs"] }
 twitter-v2 = "0.1.8"
 

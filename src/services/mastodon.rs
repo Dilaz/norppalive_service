@@ -5,15 +5,8 @@ use crate::CONFIG;
 
 use super::SocialMediaService;
 
+#[derive(Debug, Default)]
 pub struct MastodonService;
-
-impl MastodonService {
-    pub fn new() -> Self {
-        Self {
-            // Initialize your Mastodon service fields here
-        }
-    }
-}
 
 impl SocialMediaService for MastodonService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), String> {
@@ -41,7 +34,7 @@ impl SocialMediaService for MastodonService {
             in_reply_to_id: None,
             sensitive: None,
             spoiler_text: None,
-            visibility: Some(StatusVisibility::Private),
+            visibility: Some(StatusVisibility::Public),
             scheduled_at: None,
             language: None,
             quote_id: None,
