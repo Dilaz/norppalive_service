@@ -24,7 +24,10 @@ impl OutputService {
                 }
                 Service::Bluesky => {
                     info!("Adding Bluesky service");
-                    output_services.push(BlueskyService::new( ).into());
+                }
+                Service::Kafka => {
+                    info!("Adding Kafka service");
+                    output_services.push(KafkaService::default().into());
                 }
             }
         }

@@ -9,6 +9,7 @@ pub struct Config {
     pub twitter: Twitter,
     pub mastodon: Mastodon,
     pub bluesky: Bluesky,
+    pub kafka: Kafka,
 }
 
 #[derive(Deserialize, Debug)]
@@ -20,7 +21,7 @@ pub struct Stream {
 #[derive(Deserialize, Debug)]
 pub struct Detection {
     pub minimum_detection_percentage: u8,
-    pub minimum_detection_frames: u8,
+    pub minimum_detection_frames: u32,
     pub api_url: String,
     pub ignore_points: Vec<Point>,
 }
@@ -36,6 +37,7 @@ pub enum Service {
     Twitter,
     Mastodon,
     Bluesky,
+    Kafka,
 }
 #[derive(Deserialize, Debug)]
 pub struct Output {
@@ -72,4 +74,10 @@ pub struct Bluesky {
     pub login: String,
     pub handle: String,
     pub password: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Kafka {
+    pub broker: String,
+    pub topic: String,
 }

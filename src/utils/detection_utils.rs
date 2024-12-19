@@ -96,10 +96,10 @@ impl DetectionService {
         Ok(vec![])
     }
 
-    pub async fn process_detection(&mut self, detection_result: &Vec<DetectionResult>) {
+    pub async fn process_detection(&mut self, detection_result: &Vec<DetectionResult>, detections_in_row: u32) -> Option<u32> {
         if detection_result.len() == 0 {
             debug!("No detections");
-            return;
+            return None;
         }
         info!("Found {} seals", detection_result.len());
 
@@ -126,7 +126,7 @@ impl DetectionService {
 
         if acceptable_detections.len() == 0 {
             debug!("No acceptable detections");
-            return;
+            return None;
         }
 
         info!(
@@ -137,7 +137,7 @@ impl DetectionService {
 
         self.last_detection_time = Local::now().timestamp();
 
-        if self.should_post().await {
+        if self.should_post(detections_in_row).await {
             info!("Posting to social media");
             if let Ok(image) = draw_boxes_on_image(&acceptable_detections) {
                 if let Err(err) = self.output_service.post_to_social_media(image).await {
@@ -167,14 +167,17 @@ impl DetectionService {
         }
 
         let _ = draw_boxes_on_image(&acceptable_detections);
+
+        Some(detections_in_row + 1)
     }
 
     /**
      * Checks if we should post to social media
      */
-    async fn should_post(&self) -> bool {
-        return self.last_post_time == 0
-        || (self.last_post_time + CONFIG.output.post_interval * 60) < Local::now().timestamp();
+    async fn should_post(&self, detections_in_row: u32) -> bool {
+        return (self.last_post_time == 0
+        || (self.last_post_time + CONFIG.output.post_interval * 60) < Local::now().timestamp())
+        && detections_in_row >= CONFIG.detection.minimum_detection_frames;
     }
 
     /**

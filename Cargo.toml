@@ -20,8 +20,8 @@ ipld-core = { version = "0.4.1", features = ["serde"] }
 lazy_static = "1.5.0"
 megalodon = "0.13.9"
 rand = "0.8.5"
-reqwest = { version = "0.12.8", features = ["multipart", "json", "blocking", "stream"] }
-reqwest_old = { version = "0.11", features = ["multipart", "json", "blocking", "stream"], package = "reqwest" }
+rdkafka = "0.36.2"
+reqwest = { version = "0.12.9", features = ["multipart", "json", "blocking", "stream"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
 tokio = { version = "1.40.0", features = ["full"] }

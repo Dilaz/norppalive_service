@@ -1,6 +1,6 @@
 use enum_dispatch::enum_dispatch;
 
-use super::{BlueskyService, MastodonService, TwitterService};
+use super::{BlueskyService, MastodonService, TwitterService, KafkaService};
 
 #[enum_dispatch(ServiceType)]
 pub trait SocialMediaService {
@@ -13,4 +13,5 @@ pub enum ServiceType {
     TwitterService,
     MastodonService,
     BlueskyService,
+    KafkaService,
 }
