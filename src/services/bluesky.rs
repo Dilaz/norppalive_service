@@ -37,34 +37,32 @@ impl SocialMediaService for BlueskyService {
             data: InputData { 
                 collection: Nsid::new(BLUESKY_COLLECTION.into()).unwrap(),
                 record: Unknown::Object({
-                    let mut map = std::collections::BTreeMap::new();
-                    map.insert("$type".to_string(), DataModel::try_from(Ipld::String(BLUESKY_COLLECTION.to_string())).unwrap());
-                    map.insert("text".to_string(), DataModel::try_from(Ipld::String(message.into())).unwrap());
-                    map.insert("createdAt".to_string(), DataModel::try_from(Ipld::String(chrono::Utc::now().to_rfc3339())).unwrap());
-                    map.insert("embed".to_string(), DataModel::try_from(Ipld::Map({
-                        let mut embed_map = std::collections::BTreeMap::new();
-                        embed_map.insert("$type".to_string(), Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string()));
-                        embed_map.insert("images".to_string(), Ipld::List(vec![{
-                            let mut image_map = std::collections::BTreeMap::new();
-                            image_map.insert("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string()));
-                            image_map.insert("alt".to_string(), Ipld::String("".to_string()));
-                            image_map.insert("image".to_string(), Ipld::Map({
-                                let mut image_blob_map = std::collections::BTreeMap::new();
-                                image_blob_map.insert("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string()));
-                                image_blob_map.insert("size".to_string(), Ipld::Integer(blob_ref.size as i128));
-                                image_blob_map.insert("ref".to_string(), Ipld::Map({
-                                    let mut image_ref_map = std::collections::BTreeMap::new();
-                                    image_ref_map.insert("$link".to_string(), Ipld::String(blob_ref.cid));
-                                    image_ref_map
-                                }));
-                                image_blob_map.insert("mimeType".to_string(), Ipld::String(blob_ref.mime_type));
-                                image_blob_map
-                            }));
-                            Ipld::Map(image_map)
-                        }]));
-                        embed_map
-                    })).map_err(|err| std::format!("Error creating embed map {}", err))?);
-                    map
+                    std::collections::BTreeMap::from([
+                        ("$type".to_string(), DataModel::try_from(Ipld::String(BLUESKY_COLLECTION.to_string())).unwrap()),
+                        ("text".to_string(), DataModel::try_from(Ipld::String(message.into())).unwrap()),
+                        ("createdAt".to_string(), DataModel::try_from(Ipld::String(chrono::Utc::now().to_rfc3339())).unwrap()),
+                        ("embed".to_string(), DataModel::try_from(Ipld::Map({
+                            std::collections::BTreeMap::from([
+                                ("$type".to_string(), Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string())),
+                                ("images".to_string(), Ipld::List(vec![{
+                                    Ipld::Map(std::collections::BTreeMap::from([
+                                        ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
+                                        ("alt".to_string(), Ipld::String("".to_string())),
+                                        ("image".to_string(), Ipld::Map({
+                                            std::collections::BTreeMap::from([
+                                                ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
+                                                ("size".to_string(), Ipld::Integer(blob_ref.size as i128)),
+                                                ("ref".to_string(), Ipld::Map({
+                                                    std::collections::BTreeMap::from([("$link".to_string(), Ipld::String(blob_ref.cid))])
+                                                })),
+                                                ("mimeType".to_string(), Ipld::String(blob_ref.mime_type)),
+                                            ])
+                                        })),
+                                    ]))
+                                }])),
+                            ])
+                        })).map_err(|err| std::format!("Error creating embed map {}", err))?),
+                    ])
                 }),
                 repo: AtIdentifier::Handle(Handle::new((&CONFIG.bluesky.handle).into()).unwrap()),
                 rkey: Option::None,
