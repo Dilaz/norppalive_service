@@ -16,7 +16,7 @@ impl SocialMediaService for MastodonService {
             (&CONFIG.mastodon.host).into(),
             Some((&CONFIG.mastodon.token).into()),
             None,
-        );
+        ).expect("Could not create Mastodon client");
     
         // Upload image to mastodon
         let upload_media = client.upload_media(image_path.to_string(), None).await

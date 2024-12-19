@@ -59,7 +59,7 @@ pub struct DetectionService {
 impl DetectionService {
     pub fn new() -> Self {
         Self {
-            output_service: OutputService::new(),
+            output_service: OutputService::default(),
             last_post_time: 0,
             last_image_save_time: 0,
             last_detection_time: 0,
