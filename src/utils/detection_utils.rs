@@ -1,15 +1,12 @@
 use chrono::Local;
-use reqwest::{multipart, Body, Client};
 use serde::{Deserialize, Deserializer, Serialize};
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
+use tokio::time::sleep;
 use tracing::{debug, error, info};
-use std::sync::atomic::Ordering::Release;
+use std::time::Duration;
 
 use crate::{
-    utils::image_utils::draw_boxes_on_image,
-    CONFIG, SHUTDOWN,
-};
+    utils::image_utils::draw_boxes_on_image, CONFIG}
+;
 
 use super::output::OutputService;
 
@@ -55,7 +52,6 @@ pub struct DetectionService {
     last_image_save_time: i64,
     last_detection_time: i64,
 }
-
 impl DetectionService {
     pub fn new() -> Self {
         Self {
@@ -68,33 +64,47 @@ impl DetectionService {
 
     pub async fn do_detection(&self, filename: &str) -> Result<Vec<DetectionResult>, String> {
         info!("Detecting and stuff!");
+        sleep(Duration::from_secs(3)).await;
+        Ok(serde_json::from_str("[
+            {
+                \"box\": [
+                    100.0,
+                    500.0,
+                    190.0,
+                    192.0
+                ],
+                \"cls\": 2.0,
+                \"cls_name\": \"norppa\",
+                \"conf\": 0.7746183276176453
+            }
+        ]").unwrap())
         
-        let file_handle = File::open(&filename).await.map_err(|err| format!("Could not open the file: {}", err))?;
-        let bytes_stream = FramedRead::new(file_handle, BytesCodec::new());
-        let form = multipart::Form::new()
-        .part("file", multipart::Part::stream(Body::wrap_stream(bytes_stream))
-        .file_name(filename.to_string())
-        .mime_str("image/png")
-        .expect("error"));
-        println!("File loaded!");
+        // let file_handle = File::open(&filename).await.map_err(|err| format!("Could not open the file: {}", err))?;
+        // let bytes_stream = FramedRead::new(file_handle, BytesCodec::new());
+        // let form = multipart::Form::new()
+        // .part("file", multipart::Part::stream(Body::wrap_stream(bytes_stream))
+        // .file_name(filename.to_string())
+        // .mime_str("image/png")
+        // .expect("error"));
+        // println!("File loaded!");
 
-        let client = Client::new();
-        let res = client
-        .post(&CONFIG.detection.api_url,)
-        .multipart(form)
-        .send().await;
+        // let client = Client::new();
+        // let res = client
+        // .post(&CONFIG.detection.api_url,)
+        // .multipart(form)
+        // .send().await;
 
-        if let Err(err) = res {
-            SHUTDOWN.store(true, Release);
-            return Err(format!("Could not send the request: {}", err));
-        }
+        // if let Err(err) = res {
+        //     SHUTDOWN.store(true, Release);
+        //     return Err(format!("Could not send the request: {}", err));
+        // }
 
-        let result: Vec<DetectionResult> = res.unwrap().json().await
-        .map_err(|err| format!("Could not parse detector response: {}", err))?;
+        // let result: Vec<DetectionResult> = res.unwrap().json().await
+        // .map_err(|err| format!("Could not parse detector response: {}", err))?;
 
-        println!("{:?}", result);
+        // println!("{:?}", result);
 
-        Ok(vec![])
+        // Ok(vec![])
     }
 
     pub async fn process_detection(&mut self, detection_result: &[DetectionResult], detections_in_row: u32) -> Option<u32> {
@@ -191,5 +201,17 @@ impl DetectionService {
 
         self.last_image_save_time == 0
         || (self.last_image_save_time + CONFIG.output.image_save_interval  * 60) < Local::now().timestamp()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_save_image_1() {
+        let service = DetectionService::default();
+        service.last_image_save_time = 0;
+        assert_eq!(service.should_save_image(), true)
     }
 }

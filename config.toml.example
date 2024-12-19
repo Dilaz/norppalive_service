@@ -48,3 +48,7 @@ host = "https://bsky.social"
 login = ""
 handle = "username.bsky.social"
 password = ""
+
+[kafka]
+broker = ""
+topic = "norppalive"
