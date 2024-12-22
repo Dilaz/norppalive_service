@@ -1,7 +1,7 @@
 use megalodon::{entities::{StatusVisibility, UploadMedia}, megalodon::PostStatusInputOptions};
 use tracing::{debug, info};
 
-use crate::CONFIG;
+use crate::{error::NorppaliveError, CONFIG};
 
 use super::SocialMediaService;
 
@@ -9,7 +9,7 @@ use super::SocialMediaService;
 pub struct MastodonService;
 
 impl SocialMediaService for MastodonService {
-    async fn post(&self, message: &str, image_path: &str) -> Result<(), String> {
+    async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         info!("Logging in to Mastodon");
         let client = megalodon::generator(
             megalodon::SNS::Mastodon,
@@ -19,8 +19,7 @@ impl SocialMediaService for MastodonService {
         ).expect("Could not create Mastodon client");
     
         // Upload image to mastodon
-        let upload_media = client.upload_media(image_path.to_string(), None).await
-            .map_err(|err| format!("Error uploading image to Mastodon: {}", err))?
+        let upload_media = client.upload_media(image_path.to_string(), None).await?
             .json();
         
         let options = PostStatusInputOptions {
@@ -40,12 +39,15 @@ impl SocialMediaService for MastodonService {
             quote_id: None,
         };
     
-        let res = client.post_status(message.to_string(), Some(&options)).await
-        .map_err(|err| format!("Could not verity Mastodon login credentials: {}", err))?;
+        let res = client.post_status(message.to_string(), Some(&options)).await?;
     
         info!("Logged in to Mastodon");
         debug!("{:#?}", res.json());
     
         Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "Mastodon"
     }
 }

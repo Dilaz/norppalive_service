@@ -50,5 +50,5 @@ handle = "username.bsky.social"
 password = ""
 
 [kafka]
-broker = ""
-topic = "norppalive"
+broker = "localhost:19092"
+topic = "detection"

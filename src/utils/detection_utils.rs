@@ -5,7 +5,7 @@ use tracing::{debug, error, info};
 use std::time::Duration;
 
 use crate::{
-    utils::image_utils::draw_boxes_on_image, CONFIG}
+    error::NorppaliveError, utils::image_utils::draw_boxes_on_image, CONFIG}
 ;
 
 use super::output::OutputService;
@@ -62,7 +62,7 @@ impl DetectionService {
         }
     }
 
-    pub async fn do_detection(&self, filename: &str) -> Result<Vec<DetectionResult>, String> {
+    pub async fn do_detection(&self, _filename: &str) -> Result<Vec<DetectionResult>, NorppaliveError> {
         info!("Detecting and stuff!");
         sleep(Duration::from_secs(3)).await;
         Ok(serde_json::from_str("[

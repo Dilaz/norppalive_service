@@ -1,8 +1,8 @@
 use chrono::Utc;
 use image::DynamicImage;
 use rand::prelude::*;
-use tracing::info;
-use crate::{config::Service, services::{BlueskyService, MastodonService, ServiceType, SocialMediaService, TwitterService, KafkaService}, CONFIG};
+use tracing::{error, info};
+use crate::{config::Service, error::NorppaliveError, services::{BlueskyService, KafkaService, MastodonService, ServiceType, SocialMediaService, TwitterService}, CONFIG};
 
 pub struct OutputService {
     output_services: Vec<ServiceType>,
@@ -41,14 +41,14 @@ impl Default for OutputService {
     }
 }
 impl OutputService {
-    pub async fn post_to_social_media(&self, image: DynamicImage) -> Result<(), String> {
+    pub async fn post_to_social_media(&self, image: DynamicImage) -> Result<(), NorppaliveError> {
         let services = &CONFIG.output.services;
 
         info!("Posting to social media services: {:?}", services);
 
         // Save the image
         let image_path = format!("{}/image-{}.jpg", &CONFIG.output.output_file_folder, Utc::now().timestamp());
-        image.save(&image_path).map_err(|err| format!("Error saving image: {}", err))?;
+        image.save(&image_path)?;
 
         // Get a random message
         let messages = &CONFIG.output.messages;
@@ -60,11 +60,14 @@ impl OutputService {
         }
 
         let futures = self.output_services.iter()
-            .map(|service| service.post(&message, &image_path));
+            .map(|service| (service, service.post(&message, &image_path)));
 
-        for future in futures {
+        for (service, future) in futures {
             async {
-                let _ = future.await.map_err(|err| format!("Error posting to social media: {}", err));
+                match future.await {
+                    Ok(_) => info!("Posted to social media service {:?}", service.name()),
+                    Err(err) => error!("Error posting to {}: {}", service.name(), err),
+                }
             }.await;
         }
 

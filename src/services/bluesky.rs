@@ -3,7 +3,7 @@ use atrium_api::{agent::{store::MemorySessionStore, AtpAgent}, com::atproto::rep
 use ipld_core::ipld::Ipld;
 use tracing::{debug, info, warn};
 
-use crate::CONFIG;
+use crate::{error::NorppaliveError, CONFIG};
 
 use super::SocialMediaService;
 
@@ -23,7 +23,7 @@ pub struct BlueskyService {
 }
 
 impl SocialMediaService for BlueskyService {
-    async fn post(&self, message: &str, image_path: &str) -> Result<(), String> {
+    async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         if !self.is_logged_in {
             warn!("Already logged in to Bluesky, logging in...");
             self.login().await?;
@@ -61,7 +61,7 @@ impl SocialMediaService for BlueskyService {
                                     ]))
                                 }])),
                             ])
-                        })).map_err(|err| std::format!("Error creating embed map {}", err))?),
+                        }))?),
                     ])
                 }),
                 repo: AtIdentifier::Handle(Handle::new((&CONFIG.bluesky.handle).into()).unwrap()),
@@ -74,12 +74,15 @@ impl SocialMediaService for BlueskyService {
 
         debug!("Record data: {:?}", record_data);
         info!("Posting to Bluesky...");
-        let post = self.agent.api.com.atproto.repo.create_record(record_data).await
-            .map_err(|err| format!("Error posting to Bluesky: {:?}", err))?;
+        let post = self.agent.api.com.atproto.repo.create_record(record_data).await?;
         info!("Posted to Bluesky: {}", post.uri);
         debug!("Post: {:?}", post);
 
         Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "Bluesky"
     }
 }
 
@@ -96,20 +99,17 @@ impl Default for BlueskyService {
 }
     
 impl BlueskyService {
-    async fn login(&self) -> Result<(), String> {
-        let _login = self.agent.login(&CONFIG.bluesky.login, &CONFIG.bluesky.password).await
-            .map_err(|err| format!("Error logging in to Bluesky: {:?}", err))?;
+    async fn login(&self) -> Result<(), NorppaliveError> {
+        let _login = self.agent.login(&CONFIG.bluesky.login, &CONFIG.bluesky.password).await?;
 
         Ok(())
     }
 
-    async fn upload_image(&self, image_path: &str) -> Result<UploadResponse, String> {
+    async fn upload_image(&self, image_path: &str) -> Result<UploadResponse, NorppaliveError> {
         info!("Uploading image: {}", image_path);
-        let image_data = std::fs::read(image_path)
-            .map_err(|err| format!("Error reading image file: {:?}", err))?;
+        let image_data = std::fs::read(image_path)?;
     
-        let res = self.agent.api.com.atproto.repo.upload_blob(image_data).await
-            .map_err(|err| format!("Error creating blob: {:?}", err))?;
+        let res = self.agent.api.com.atproto.repo.upload_blob(image_data).await?;
 
         debug!("Blob: {:?}", res);
         info!("Uploaded image to Bluesky");

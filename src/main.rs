@@ -16,13 +16,15 @@ use std::sync::atomic::{AtomicBool, Ordering::{Relaxed, Release}, AtomicI64};
 use tracing::{debug, error, info};
 use tracing_subscriber::util::SubscriberInitExt;
 use lazy_static::lazy_static;
+use miette::Result;
 
 pub mod config;
 pub mod utils;
 pub mod services;
+pub mod error;
 
+use error::NorppaliveError;
 use config::Config;
-
 
 #[derive(Parser)]
 #[command(version, about, long_about = None, name = "Norppalive Service", author = "Risto \"Dilaz\" Viitanen")]
@@ -41,7 +43,7 @@ lazy_static! {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), String> {
+async fn main() -> Result<(), NorppaliveError> {
     tracing::info!("Starting!");
     // initialize tracing
     tracing_subscriber::registry()
@@ -52,29 +54,33 @@ async fn main() -> Result<(), String> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    ffmpeg::init().map_err(|err| format!("{}", err))?;
+    ffmpeg::init()?;
 
     // Set log level to suppress FFmpeg logs
     ffmpeg::log::set_level(ffmpeg::log::Level::Quiet);
 
     // Get the actual stream url from Youtube using yt-dlp
-    let stream_url = get_stream_url(&CONFIG.stream.stream_url).map_err(|err| format!("Could not get stream URL: {}", err))?;
+    let stream_url = if CONFIG.stream.stream_url.starts_with("https://") {
+        get_stream_url(&CONFIG.stream.stream_url)?
+    } else {
+        CONFIG.stream.stream_url.clone()
+    };
     if stream_url.is_empty() {
-        return Err("Could not get stream url".to_string());
+        return Err(NorppaliveError::Other("Could not get stream url".to_string()));
     }
     info!("Stream URL: {}", stream_url);
 
     // Select the best video quality stream
-    let mut ictx = input(&stream_url).map_err(|err| format!("{}", err))?;
+    let mut ictx = input(&stream_url)?;
     let input = ictx
         .streams()
         .best(Type::Video)
-        .ok_or("Could not open the stream".to_string())?;
+        .ok_or(NorppaliveError::Other("Could not open the stream".to_string()))?;
 
     let video_stream_index = input.index();
 
     // Create a decoder
-    let mut decoder = input.codec().decoder().video().map_err(|err| format!("{}", err))?;
+    let mut decoder = input.codec().decoder().video()?;
 
     // We can skip everything else and only detect from keyframes (which is recommended)
     if CONFIG.stream.only_keyframes {
@@ -89,21 +95,20 @@ async fn main() -> Result<(), String> {
         decoder.width(),
         decoder.height(),
         Flags::BILINEAR,
-    )
-    .map_err(|err| format!("{}", err))?;
+    )?;
 
     let mut frame_index = 0u64;
     let mut skipped = 0u64;
 
     // Callback function for the received frames
     let mut receive_and_process_decoded_frames =
-    |decoder: &mut ffmpeg::decoder::Video| -> Result<(), String> {
+    |decoder: &mut ffmpeg::decoder::Video| -> Result<(), NorppaliveError> {
         let mut decoded = Video::empty();
         while decoder.receive_frame(&mut decoded).is_ok() {
             if SAVE_IMAGE.load(Relaxed) {
                 info!("Saving image");
                 let mut rgb_frame = Video::empty();
-                scaler.run(&decoded, &mut rgb_frame).map_err(|err| format!("Could not run scaler: {}", err))?;
+                scaler.run(&decoded, &mut rgb_frame)?;
                 save_file(&rgb_frame, &CONFIG.image_filename)?;
                 info!("Saved image {} to {}", frame_index, &CONFIG.image_filename);
                 SAVE_IMAGE.store(false, Relaxed);
@@ -121,7 +126,7 @@ async fn main() -> Result<(), String> {
     };
 
     // Spawn a new thread to do the detections in so it doesn't mess with ffmpeg
-    let detection_thread = tokio::spawn(async {
+    let detection_thread: tokio::task::JoinHandle<Result<(), NorppaliveError>> = tokio::spawn(async {
         // Create a detection service
         let mut detection_service = utils::detection_utils::DetectionService::default();
         let filename = CONFIG.image_filename.clone();
@@ -135,26 +140,23 @@ async fn main() -> Result<(), String> {
                 sleep(Duration::from_millis(20)).await;
             }
             info!("Got new image!");
-            let detection_result = detection_service.do_detection(&filename).await;
+            let detection_result = detection_service.do_detection(&filename).await?;
+            debug!("Detection result: {:?}", detection_result);
 
-            match detection_result {
-                Ok(detection_result) => {
-                    debug!("Detection result: {:?}", detection_result);
-                    // Update detection count
-                    detections_in_row = detection_service.process_detection(&detection_result, detections_in_row).await.unwrap_or(0);
-                    debug!("Detections in row: {}", detections_in_row);
-                },
-                Err(err) => error!("Error while detecting stuff: {}", err),
-            }
+            // Update detection count
+            detections_in_row = detection_service.process_detection(&detection_result, detections_in_row).await.unwrap_or(0);
+            debug!("Detections in row: {}", detections_in_row);
         }
         mem::drop(filename);
+
+        Ok(())
     });
 
     // Start reading packets from the stream
     for (stream, packet) in ictx.packets() {
         if stream.index() == video_stream_index {
-            decoder.send_packet(&packet).map_err(|err| format!("Could not send package to decoder: {}", err))?;
-            receive_and_process_decoded_frames(&mut decoder).map_err(|err| format!("Could not process decoded frame: {}", err))?;
+            decoder.send_packet(&packet)?;
+            receive_and_process_decoded_frames(&mut decoder)?;
         }
 
         if SHUTDOWN.load(Relaxed) {
@@ -165,10 +167,12 @@ async fn main() -> Result<(), String> {
     SHUTDOWN.store(true, Release);
 
     // Wait for the detection thread to shut down
-    detection_thread.await.unwrap();
+    if let Err(e) = detection_thread.await {
+        error!("Detection thread error: {:?}", e);
+    }
 
     // Send EOF signal to the decoder
-    decoder.send_eof().map_err(|err| format!("Could not send EOF to stream: {}", err))?;
+    decoder.send_eof()?;
 
     Ok(())
 }
@@ -178,7 +182,7 @@ async fn main() -> Result<(), String> {
 /**
  * Get the stream URL with yt-dlp
  */
-fn get_stream_url(stream_url: &str) -> Result<String, std::io::Error> {
+fn get_stream_url(stream_url: &str) -> Result<String, NorppaliveError> {
     if !stream_url.starts_with("http") {
         return Ok(stream_url.to_string());
     }
@@ -186,8 +190,7 @@ fn get_stream_url(stream_url: &str) -> Result<String, std::io::Error> {
     let output = Command::new("sh")
     .arg("-c")
     .arg(format!("yt-dlp -f 95 -g {}", stream_url))
-    .output()
-    .expect("failed to execute process");
+    .output()?;
 
     Ok(output.stdout.iter().map(|&c| c as char).collect())
 }
@@ -197,8 +200,7 @@ fn get_stream_url(stream_url: &str) -> Result<String, std::io::Error> {
 /**
  * Save the frame to a file
  */
-fn save_file(frame: &Video, filename: &str) -> Result<(), String> {
-    image::save_buffer(filename, frame.data(0), frame.width(), frame.height(), image::ExtendedColorType::Rgb8)
-        .map_err(|err| format!("Could not save image: {}", err))?;
+fn save_file(frame: &Video, filename: &str) -> Result<(), NorppaliveError> {
+    image::save_buffer(filename, frame.data(0), frame.width(), frame.height(), image::ExtendedColorType::Rgb8)?;
     Ok(())
 }

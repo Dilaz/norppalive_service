@@ -1,18 +1,15 @@
 use image::DynamicImage;
 use ab_glyph::{FontRef, PxScale};
 use image::ImageReader;
+use miette::Result;
 
-use crate::CONFIG;
+use crate::{error::NorppaliveError, CONFIG};
 
 use super::detection_utils::DetectionResult;
 
-
-
-pub fn draw_boxes_on_image(acceptable_detections: &Vec<&DetectionResult>) -> Result<DynamicImage, String> {
-    let mut image = ImageReader::open(&CONFIG.image_filename)
-    .map_err(|err| format!("Could not open image file: {}", err))?
-    .decode()
-    .map_err(|err| format!("Could not decode image: {}", err))?;
+pub fn draw_boxes_on_image(acceptable_detections: &Vec<&DetectionResult>) -> Result<DynamicImage, NorppaliveError> {
+    let mut image = ImageReader::open(&CONFIG.image_filename)?
+    .decode()?;
 
     // Draw bounding boxes
     for detection in acceptable_detections {
@@ -28,7 +25,7 @@ pub fn draw_boxes_on_image(acceptable_detections: &Vec<&DetectionResult>) -> Res
 
         // Draw label
         let label = format!("{} ({}%)", detection.cls_name, detection.conf);
-        let font = FontRef::try_from_slice(include_bytes!("../DejaVuSans.ttf")).map_err(|err| format!("Could not load font: {}", err))?;
+        let font = FontRef::try_from_slice(include_bytes!("../DejaVuSans.ttf"))?;
         let scale: PxScale = PxScale { x: 25.0, y: 25.0 };
         let text_size = imageproc::drawing::text_size(scale, &font, &label);
         let padding_x = 10;
