@@ -22,5 +22,7 @@ jobs:
       run: echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
     - name: Build
       run: cargo build --verbose
+    - name: Copy config example to config file
+      run: cp config.toml.example config.toml
     - name: Run tests
       run: cargo test --verbose
