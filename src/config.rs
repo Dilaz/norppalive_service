@@ -49,8 +49,8 @@ pub struct Output {
     pub output_file_folder: String,
     pub replace_hashtags: bool,
     pub messages: Vec<String>,
-    pub kvstore_url: String,
-    pub kvstore_token: String,
+    // pub kvstore_url: String,
+    // pub kvstore_token: String,
     pub services: Vec<Service>,
 }
 

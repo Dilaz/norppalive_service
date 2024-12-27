@@ -34,14 +34,14 @@ services = [
 ]
 
 [twitter]
-twitter_token = ""
+token = ""
 token_secret = ""
-twitter_consumer_key = ""
-twitter_consumer_secret = ""
+consumer_key = ""
+consumer_secret = ""
 
 [mastodon]
-mastodon_host = ""
-mastodon_token = ""
+host = ""
+token = ""
 
 [bluesky]
 host = "https://bsky.social"
