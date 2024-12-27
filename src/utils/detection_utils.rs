@@ -210,8 +210,11 @@ mod tests {
 
     #[test]
     fn test_should_save_image_1() {
-        let service = DetectionService::default();
-        service.last_image_save_time = 0;
-        assert_eq!(service.should_save_image(), true)
+        let service = DetectionService {
+            last_image_save_time: 0,
+            ..Default::default()
+        };
+
+        assert!(service.should_save_image())
     }
 }
