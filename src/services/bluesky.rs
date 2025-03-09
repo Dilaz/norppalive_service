@@ -1,5 +1,12 @@
+use atrium_api::{
+    agent::{store::MemorySessionStore, AtpAgent},
+    com::atproto::repo::create_record::InputData,
+    types::{
+        string::{AtIdentifier, Handle, Nsid},
+        BlobRef, DataModel, Object, TypedBlobRef, Unknown,
+    },
+};
 use atrium_xrpc_client::reqwest::ReqwestClient;
-use atrium_api::{agent::{store::MemorySessionStore, AtpAgent}, com::atproto::repo::create_record::InputData, types::{string::{AtIdentifier, Handle, Nsid}, BlobRef, DataModel, Object, TypedBlobRef, Unknown}};
 use ipld_core::ipld::Ipld;
 use tracing::{debug, info, warn};
 
@@ -34,37 +41,61 @@ impl SocialMediaService for BlueskyService {
 
         // Post the message to Bluesky
         let record_data = Object::<InputData> {
-            data: InputData { 
+            data: InputData {
                 collection: Nsid::new(BLUESKY_COLLECTION.into()).unwrap(),
+                repo: AtIdentifier::Handle(Handle::new((&CONFIG.bluesky.handle).into()).unwrap()),
                 record: Unknown::Object({
+                    let post_type = DataModel::try_from(Ipld::String(BLUESKY_COLLECTION.to_string())).unwrap();
+                    let text = DataModel::try_from(Ipld::String(message.into())).unwrap();
+                    let created_at =
+                        DataModel::try_from(Ipld::String(chrono::Utc::now().to_rfc3339())).unwrap();
+
+                    let embed_type =
+                        DataModel::try_from(Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string())).unwrap();
+                    let image_blob_type =
+                        DataModel::try_from(Ipld::String(BLUESKY_BLOB_TYPE.to_string())).unwrap();
+
+                    let image_map = Ipld::Map({
+                        std::collections::BTreeMap::from([
+                            ("$type".to_string(), image_blob_type.clone().into()),
+                            ("alt".to_string(), Ipld::String("".to_string())),
+                            (
+                                "image".to_string(),
+                                Ipld::Map({
+                                    std::collections::BTreeMap::from([
+                                        ("$type".to_string(), image_blob_type.clone().into()),
+                                        ("size".to_string(), Ipld::Integer(blob_ref.size as i128)),
+                                        (
+                                            "ref".to_string(),
+                                            Ipld::Map({
+                                                std::collections::BTreeMap::from([(
+                                                    "$link".to_string(),
+                                                    Ipld::String(blob_ref.cid.clone()),
+                                                )])
+                                            }),
+                                        ),
+                                        ("mimeType".to_string(), Ipld::String(blob_ref.mime_type.clone())),
+                                    ])
+                                }),
+                            ),
+                        ])
+                    });
+                    let images_list = Ipld::List(vec![image_map]);
+
+                    let embed_map = DataModel::try_from(Ipld::Map({
+                        std::collections::BTreeMap::from([
+                            ("$type".to_string(), embed_type.into()),
+                            ("images".to_string(), images_list.into()),
+                        ])
+                    }))?;
+
                     std::collections::BTreeMap::from([
-                        ("$type".to_string(), DataModel::try_from(Ipld::String(BLUESKY_COLLECTION.to_string())).unwrap()),
-                        ("text".to_string(), DataModel::try_from(Ipld::String(message.into())).unwrap()),
-                        ("createdAt".to_string(), DataModel::try_from(Ipld::String(chrono::Utc::now().to_rfc3339())).unwrap()),
-                        ("embed".to_string(), DataModel::try_from(Ipld::Map({
-                            std::collections::BTreeMap::from([
-                                ("$type".to_string(), Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string())),
-                                ("images".to_string(), Ipld::List(vec![{
-                                    Ipld::Map(std::collections::BTreeMap::from([
-                                        ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
-                                        ("alt".to_string(), Ipld::String("".to_string())),
-                                        ("image".to_string(), Ipld::Map({
-                                            std::collections::BTreeMap::from([
-                                                ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
-                                                ("size".to_string(), Ipld::Integer(blob_ref.size as i128)),
-                                                ("ref".to_string(), Ipld::Map({
-                                                    std::collections::BTreeMap::from([("$link".to_string(), Ipld::String(blob_ref.cid))])
-                                                })),
-                                                ("mimeType".to_string(), Ipld::String(blob_ref.mime_type)),
-                                            ])
-                                        })),
-                                    ]))
-                                }])),
-                            ])
-                        }))?),
+                        ("$type".to_string(), post_type),
+                        ("text".to_string(), text),
+                        ("createdAt".to_string(), created_at),
+                        ("embed".to_string(), embed_map),
                     ])
                 }),
-                repo: AtIdentifier::Handle(Handle::new((&CONFIG.bluesky.handle).into()).unwrap()),
                 rkey: Option::None,
                 swap_commit: Option::None,
                 validate: Option::None,
@@ -74,7 +105,14 @@ impl SocialMediaService for BlueskyService {
 
         debug!("Record data: {:?}", record_data);
         info!("Posting to Bluesky...");
-        let post = self.agent.api.com.atproto.repo.create_record(record_data).await?;
+        let post = self
+            .agent
+            .api
+            .com
+            .atproto
+            .repo
+            .create_record(record_data)
+            .await?;
         info!("Posted to Bluesky: {}", post.uri);
         debug!("Post: {:?}", post);
 
@@ -97,10 +135,13 @@ impl Default for BlueskyService {
         }
     }
 }
-    
+
 impl BlueskyService {
     async fn login(&self) -> Result<(), NorppaliveError> {
-        let _login = self.agent.login(&CONFIG.bluesky.login, &CONFIG.bluesky.password).await?;
+        let _login = self
+            .agent
+            .login(&CONFIG.bluesky.login, &CONFIG.bluesky.password)
+            .await?;
 
         Ok(())
     }
@@ -108,8 +149,15 @@ impl BlueskyService {
     async fn upload_image(&self, image_path: &str) -> Result<UploadResponse, NorppaliveError> {
         info!("Uploading image: {}", image_path);
         let image_data = std::fs::read(image_path)?;
-    
-        let res = self.agent.api.com.atproto.repo.upload_blob(image_data).await?;
+
+        let res = self
+            .agent
+            .api
+            .com
+            .atproto
+            .repo
+            .upload_blob(image_data)
+            .await?;
 
         debug!("Blob: {:?}", res);
         info!("Uploaded image to Bluesky");

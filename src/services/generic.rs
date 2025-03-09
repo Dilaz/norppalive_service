@@ -2,7 +2,7 @@ use enum_dispatch::enum_dispatch;
 
 use crate::error::NorppaliveError;
 
-use super::{BlueskyService, MastodonService, TwitterService, KafkaService};
+use super::{BlueskyService, KafkaService, MastodonService, TwitterService};
 
 #[enum_dispatch(ServiceType)]
 pub trait SocialMediaService {

@@ -1,12 +1,12 @@
-mod generic;
-mod twitter;
 mod bluesky;
-mod mastodon;
+mod generic;
 mod kafka;
+mod mastodon;
+mod twitter;
 
-pub use twitter::TwitterService;
 pub use bluesky::BlueskyService;
-pub use mastodon::MastodonService;
-pub use kafka::KafkaService;
 pub use generic::ServiceType;
 pub use generic::SocialMediaService;
+pub use kafka::KafkaService;
+pub use mastodon::MastodonService;
+pub use twitter::TwitterService;

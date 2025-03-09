@@ -1,4 +1,7 @@
-use megalodon::{entities::{StatusVisibility, UploadMedia}, megalodon::PostStatusInputOptions};
+use megalodon::{
+    entities::{StatusVisibility, UploadMedia},
+    megalodon::PostStatusInputOptions,
+};
 use tracing::{debug, info};
 
 use crate::{error::NorppaliveError, CONFIG};
@@ -16,19 +19,20 @@ impl SocialMediaService for MastodonService {
             (&CONFIG.mastodon.host).into(),
             Some((&CONFIG.mastodon.token).into()),
             None,
-        ).expect("Could not create Mastodon client");
-    
+        )
+        .expect("Could not create Mastodon client");
+
         // Upload image to mastodon
-        let upload_media = client.upload_media(image_path.to_string(), None).await?
+        let upload_media = client
+            .upload_media(image_path.to_string(), None)
+            .await?
             .json();
-        
+
         let options = PostStatusInputOptions {
-            media_ids: Some(vec![
-                match upload_media {
-                    UploadMedia::Attachment(attachment) => attachment.id,
-                    UploadMedia::AsyncAttachment(attachment) => attachment.id,
-                }
-            ]),
+            media_ids: Some(vec![match upload_media {
+                UploadMedia::Attachment(attachment) => attachment.id,
+                UploadMedia::AsyncAttachment(attachment) => attachment.id,
+            }]),
             poll: None,
             in_reply_to_id: None,
             sensitive: None,
@@ -38,12 +42,14 @@ impl SocialMediaService for MastodonService {
             language: None,
             quote_id: None,
         };
-    
-        let res = client.post_status(message.to_string(), Some(&options)).await?;
-    
+
+        let res = client
+            .post_status(message.to_string(), Some(&options))
+            .await?;
+
         info!("Logged in to Mastodon");
         debug!("{:#?}", res.json());
-    
+
         Ok(())
     }
 
