@@ -9,6 +9,7 @@ use ffmpeg::media::Type;
 use ffmpeg::software::scaling::{Context, Flags};
 use ffmpeg::util::frame::video::Video;
 use ffmpeg::Discard;
+use ffmpeg::codec::context::Context as CodecContext;
 use lazy_static::lazy_static;
 use miette::Result;
 use std::process::Command;
@@ -87,8 +88,11 @@ async fn main() -> Result<(), NorppaliveError> {
 
     let video_stream_index = input.index();
 
-    // Create a decoder
-    let mut decoder = input.codec().decoder().video()?;
+    // Create a decoder - using parameters() instead of codec() for compatibility
+    let mut decoder = {
+        let context = CodecContext::from_parameters(input.parameters())?;
+        context.decoder().video()?
+    };
 
     // We can skip everything else and only detect from keyframes (which is recommended)
     if CONFIG.stream.only_keyframes {
