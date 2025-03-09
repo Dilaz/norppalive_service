@@ -50,20 +50,15 @@ impl SocialMediaService for BlueskyService {
                     let created_at =
                         DataModel::try_from(Ipld::String(chrono::Utc::now().to_rfc3339())).unwrap();
 
-                    let embed_type =
-                        DataModel::try_from(Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string())).unwrap();
-                    let image_blob_type =
-                        DataModel::try_from(Ipld::String(BLUESKY_BLOB_TYPE.to_string())).unwrap();
-
                     let image_map = Ipld::Map({
                         std::collections::BTreeMap::from([
-                            ("$type".to_string(), image_blob_type.clone().into()),
+                            ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
                             ("alt".to_string(), Ipld::String("".to_string())),
                             (
                                 "image".to_string(),
                                 Ipld::Map({
                                     std::collections::BTreeMap::from([
-                                        ("$type".to_string(), image_blob_type.clone().into()),
+                                        ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
                                         ("size".to_string(), Ipld::Integer(blob_ref.size as i128)),
                                         (
                                             "ref".to_string(),
@@ -80,12 +75,13 @@ impl SocialMediaService for BlueskyService {
                             ),
                         ])
                     });
+
                     let images_list = Ipld::List(vec![image_map]);
 
                     let embed_map = DataModel::try_from(Ipld::Map({
                         std::collections::BTreeMap::from([
-                            ("$type".to_string(), embed_type.into()),
-                            ("images".to_string(), images_list.into()),
+                            ("$type".to_string(), Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string())),
+                            ("images".to_string(), images_list),
                         ])
                     }))?;
 
