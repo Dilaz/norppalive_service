@@ -6,8 +6,8 @@ use base64::Engine;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::ClientConfig;
 use serde_json::json;
-use tracing::{debug, info};
 use std::time::Duration;
+use tracing::{debug, info};
 
 pub struct KafkaService {
     pub topic: String,
@@ -37,15 +37,21 @@ impl SocialMediaService for KafkaService {
         let base64_encoded = base64::engine::general_purpose::STANDARD.encode(image_data);
         let payload = json!({
             "message": message,
-            "image": base64::engine::general_purpose::STANDARD.encode(base64_encoded)
-        }).to_string();
+            "image": base64_encoded
+        })
+        .to_string();
 
-        let res = self.producer.send(
-            FutureRecord::to(&self.topic)
-                .payload(&payload)
-                .key("key"),
-            Duration::from_secs(0),
-        ).await.map_err(|(err, _)| err)?;
+        let res = self
+            .producer
+            .send(
+                FutureRecord::to(&self.topic).payload(&payload).key("key"),
+                Duration::from_secs(10),
+            )
+            .await
+            .map_err(|(err, _)| {
+                info!("Kafka error details: {}", err);
+                err
+            })?;
 
         debug!("Message sent to Kafka: {:?}", res);
 

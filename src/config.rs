@@ -24,6 +24,14 @@ pub struct Detection {
     pub minimum_detection_frames: u32,
     pub api_url: String,
     pub ignore_points: Vec<Point>,
+    pub minimum_x: u32,
+    pub maximum_x: u32,
+    pub minimum_y: u32,
+    pub maximum_y: u32,
+    pub heatmap_resolution: u32,
+    pub heatmap_decay_rate: f32,
+    pub heatmap_threshold: f32,
+    pub heatmap_save_interval: i64, // How often to save heatmap images (in minutes)
 }
 
 #[derive(Deserialize, Debug)]
