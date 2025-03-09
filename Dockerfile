@@ -2,7 +2,18 @@ FROM rust:1.83-bullseye AS builder
 WORKDIR /norppalive_service
 COPY . .
 RUN apt-get update
-RUN apt-get -y install ffmpeg libavutil-dev pkg-config libavformat-dev libavfilter-dev libavdevice-dev clang libclang-dev llvm-dev cmake
+RUN apt-get install -y \
+    ffmpeg \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavfilter-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libpostproc-dev \
+    libswresample-dev \
+    libswscale-dev \
+    libclang-dev \
+    pkg-config
 RUN cargo build --release
 
 FROM gcr.io/distroless/cc-debian12
