@@ -14,10 +14,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Install ffmpeg and libavutil
+    - name: Install ffmpeg and dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libavutil-dev pkg-config libavformat-dev libavfilter-dev libavdevice-dev
+        sudo apt-get install -y \
+          ffmpeg \
+          libavcodec-dev \
+          libavdevice-dev \
+          libavfilter-dev \
+          libavformat-dev \
+          libavutil-dev \
+          libpostproc-dev \
+          libswresample-dev \
+          libswscale-dev \
+          pkg-config
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        cache: true
+        # Enable warnings as errors
+        rustflags: "-D warnings"
     - name: Set PKG_CONFIG_PATH
       run: echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
     - name: Build
