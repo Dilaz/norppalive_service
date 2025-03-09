@@ -18,6 +18,8 @@ use crate::{
 
 use super::output::OutputService;
 
+const CONFIDENCE_MULTIPLIER: f32 = 100.0;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DetectionResult {
     #[serde(deserialize_with = "deserialize_box")]
@@ -42,7 +44,10 @@ where
     D: Deserializer<'de>,
 {
     let f = f32::deserialize(deserializer)?;
-    Ok((f * 100.0) as u8)
+    if f * CONFIDENCE_MULTIPLIER > 255.0 {
+        return Err(<D::Error as serde::de::Error>::custom("Confidence value out of range"));
+    }
+    Ok((f * CONFIDENCE_MULTIPLIER) as u8)
 }
 
 fn deserialize_box<'de, D>(deserializer: D) -> Result<[u32; 4], D::Error>
@@ -417,6 +422,7 @@ impl DetectionService {
         // Draw detection points on top for debugging
         if let Err(err) = temp_map.draw_points(&mut heatmap_image) {
             error!("Could not draw detection points: {}", err);
+            return;
         }
 
         // Save the image
