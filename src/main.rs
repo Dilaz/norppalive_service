@@ -204,7 +204,7 @@ fn get_stream_url(stream_url: &str) -> Result<String, NorppaliveError> {
 
     let output = Command::new("sh")
         .arg("-c")
-        .arg(format!("yt-dlp -f 95 -g {}", stream_url))
+        .arg(format!("yt-dlp -f 96 -g {}", stream_url))
         .output()?;
 
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();

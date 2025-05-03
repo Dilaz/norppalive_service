@@ -2,14 +2,14 @@ use chrono::Local;
 use image;
 use image::DynamicImage;
 use miette::Result;
-use reqwest::{multipart, Body, Client};
+use reqwest::{multipart, Client};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::{debug, error, info};
+use tokio::io::AsyncReadExt;
 
 use crate::{
     error::NorppaliveError, utils::image_utils::draw_boxes_on_image,
@@ -99,17 +99,19 @@ impl DetectionService {
     ) -> Result<Vec<DetectionResult>, NorppaliveError> {
         info!("Starting detection process");
 
-        let file_handle = File::open(&filename).await?;
-        let bytes_stream = FramedRead::new(file_handle, BytesCodec::new());
+        let mut file_handle = File::open(&filename).await?;
+        let mut file_bytes = Vec::new();
+        file_handle.read_to_end(&mut file_bytes).await?;
+
         let form = multipart::Form::new().part(
             "file",
-            multipart::Part::stream(Body::wrap_stream(bytes_stream))
+            multipart::Part::bytes(file_bytes)
                 .file_name(filename.to_string())
                 .mime_str("image/png")
-                .expect("error"),
+                .expect("Failed to create multipart part"),
         );
 
-        info!("File loaded!");
+        info!("File loaded into memory!");
 
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
@@ -205,8 +207,9 @@ impl DetectionService {
             debug!("No detections");
             // Create and save heatmap visualization even when there are no detections
             info!("Creating and saving heatmap visualization (no detections)");
-            self.save_heatmap_visualization(&self.temperature_map, &[]);
-            return None;
+            self.save_heatmap_visualization(&self.temperature_map);
+            // Reset consecutive detections if no seals are found
+            return Some(0);
         }
 
         info!("Found {} seals", detection_result.len());
@@ -218,9 +221,14 @@ impl DetectionService {
             debug!("No acceptable detections");
             // Create and save heatmap visualization even when there are no acceptable detections
             info!("Creating and saving heatmap visualization (no acceptable detections)");
-            self.save_heatmap_visualization(&self.temperature_map, &[]);
-            return None;
+            self.save_heatmap_visualization(&self.temperature_map);
+            // Reset consecutive detections if no acceptable seals are found
+            return Some(0);
         }
+
+        // Update temperature map with new detections
+        self.temperature_map
+            .set_points_from_detections(&acceptable_detections);
 
         info!(
             "Found {} acceptable detections with confidence threshold of {}",
@@ -228,15 +236,12 @@ impl DetectionService {
             CONFIG.detection.minimum_detection_percentage
         );
 
-        // Process temperature map and get hotspots
-        let hotspots = self.process_temperature_map(&acceptable_detections);
-
         // Update the last detection time
         self.last_detection_time = Local::now().timestamp();
 
         // Create and save heatmap visualization
         info!("Creating and saving heatmap visualization");
-        self.save_heatmap_visualization(&self.temperature_map, &hotspots);
+        self.save_heatmap_visualization(&self.temperature_map);
         self.last_heatmap_save_time = Local::now().timestamp();
 
         // Handle alerts and image saving
@@ -244,6 +249,7 @@ impl DetectionService {
             .await;
 
         // Keep track of consecutive detections for backward compatibility
+        // Increment consecutive detections count
         Some(detections_in_row + 1)
     }
 
@@ -273,49 +279,6 @@ impl DetectionService {
             .collect()
     }
 
-    /**
-     * Process temperature map with detection data and identify hotspots
-     */
-    fn process_temperature_map(
-        &mut self,
-        acceptable_detections: &[&DetectionResult],
-    ) -> Vec<(f32, f32, f32)> {
-        // Update the temperature map with new detections
-        self.temperature_map
-            .set_points_from_detections(acceptable_detections);
-
-        // Check if the temperature map has hotspots using both traditional and histogram methods
-        let temp_threshold = CONFIG.detection.heatmap_threshold;
-        let hotspots = self.temperature_map.get_hotspots(temp_threshold);
-
-        // Use histogram-based hotspot detection
-        let percentile_threshold = 90.0; // Only consider top 10% as hotspots
-        let histogram_hotspots = self
-            .temperature_map
-            .get_histogram_hotspots(percentile_threshold);
-
-        // Log hotspot information
-        if !hotspots.is_empty() {
-            info!(
-                "Temperature map threshold exceeded! Found {} hotspots, highest value: {:.2}",
-                hotspots.len(),
-                hotspots[0].2
-            );
-        }
-
-        if let Some(hist_hotspots) = &histogram_hotspots {
-            if !hist_hotspots.is_empty() {
-                info!(
-                    "Histogram hotspots detected above {}th percentile! Found {} hotspots, highest value: {:.2}",
-                    percentile_threshold,
-                    hist_hotspots.len(),
-                    hist_hotspots[0].2
-                );
-            }
-        }
-
-        hotspots
-    }
 
     /**
      * Process alerts based on detection results and hotspots
@@ -390,7 +353,7 @@ impl DetectionService {
     }
 
     /// Helper method to save the heatmap visualization
-    fn save_heatmap_visualization(&self, temp_map: &TemperatureMap, hotspots: &[(f32, f32, f32)]) {
+    fn save_heatmap_visualization(&self, temp_map: &TemperatureMap) {
         // Create base image from the current frame
         let mut heatmap_image = match image::ImageReader::open(&CONFIG.image_filename) {
             Ok(reader) => match reader.decode() {
@@ -412,14 +375,7 @@ impl DetectionService {
             return;
         }
 
-        // Draw hotspots on the image if any exist
-        if !hotspots.is_empty() {
-            if let Err(err) = temp_map.draw_hotspots(&mut heatmap_image, hotspots) {
-                error!("Could not draw hotspots: {}", err);
-            }
-        }
-
-        // Draw detection points on top for debugging
+        // Only draw detection points on top for debugging
         if let Err(err) = temp_map.draw_points(&mut heatmap_image) {
             error!("Could not draw detection points: {}", err);
             return;
@@ -459,24 +415,36 @@ impl DetectionService {
             || (self.last_post_time + CONFIG.output.post_interval * 60) < Local::now().timestamp();
 
         if !time_condition {
+            debug!("Post condition not met: Not enough time passed since last post.");
             return false;
         }
 
-        // Check if we have hotspots in the temperature map
-        let temp_threshold = CONFIG.detection.heatmap_threshold;
-        let has_hotspots = !self.temperature_map.get_hotspots(temp_threshold).is_empty();
+        // Check if minimum consecutive detections are met
+        let consecutive_detections_condition = detections_in_row >= CONFIG.detection.minimum_detection_frames;
 
-        // Check for histogram-based hotspots (percentile threshold can be adjusted)
+        if !consecutive_detections_condition {
+            debug!(
+                "Post condition not met: Consecutive detections ({}) less than minimum ({}).",
+                detections_in_row,
+                CONFIG.detection.minimum_detection_frames
+            );
+            return false;
+        }
+
+        // Only use histogram-based hotspots for posting
         let percentile_threshold = 90.0;
         let has_hist_hotspots = self
             .temperature_map
             .has_histogram_hotspots(percentile_threshold);
 
-        // For backward compatibility, also consider the minimum detection frames
-        let has_min_detections = detections_in_row >= CONFIG.detection.minimum_detection_frames;
+        if !has_hist_hotspots {
+            debug!("Post condition not met: No significant heatmap hotspots detected.");
+            return false;
+        }
 
-        // Trigger posting if we have hotspots or enough consecutive detections
-        time_condition && (has_hotspots || has_hist_hotspots || has_min_detections)
+        // All conditions met
+        info!("Post conditions met: Time, consecutive detections ({}), and heatmap hotspots.", detections_in_row);
+        true
     }
 
     /**
@@ -497,79 +465,129 @@ impl DetectionService {
             );
         }
 
-        // Check if we have hotspots in the temperature map
-        let temp_threshold = CONFIG.detection.heatmap_threshold;
-        let has_hotspots = !self.temperature_map.get_hotspots(temp_threshold).is_empty();
-
-        // Check for histogram-based hotspots
+        // Only use histogram-based hotspots for saving images
         let percentile_threshold = 85.0; // Slightly lower threshold than for posting
         let has_hist_hotspots = self
             .temperature_map
             .has_histogram_hotspots(percentile_threshold);
 
-        // Save if time condition is met and there's activity in the heatmap
-        time_condition && (has_hotspots || has_hist_hotspots)
+        time_condition && has_hist_hotspots
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::temperature_map::Point;
+
     use super::*;
 
     // Test for individual parts of should_post
     #[test]
     fn test_should_post_time_condition() {
+        // Assume other conditions are met for this test
+        let detections_in_row = CONFIG.detection.minimum_detection_frames; // Meet minimum frames
+
         let service_new = DetectionService::new();
         assert_eq!(service_new.last_post_time, 0);
+
+        // For this test, we assume hotspots exist. A more robust test would mock TemperatureMap.
+        let mut service_new_with_hotspots = service_new;
+        // Simulate adding a point to potentially create a hotspot state (crude simulation)
+        service_new_with_hotspots.temperature_map.set_points(vec![
+            Point { x: 10.0, y: 10.0, value: Some(20.0) },
+            Point { x: 50.0, y: 50.0, value: Some(95.0) }, // High value point
+            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+        ]);
+        assert!(service_new_with_hotspots.should_post(detections_in_row), "Should post when time is 0");
 
         let service_recent = DetectionService {
             last_post_time: Local::now().timestamp(),
             ..Default::default()
         };
-        let time_passed = (service_recent.last_post_time + CONFIG.output.post_interval * 60)
-            < Local::now().timestamp();
-        assert!(!time_passed); // Time hasn't passed in this case
+
+        // Simulate hotspots again for the recent post scenario
+        let mut service_recent_with_hotspots = service_recent;
+        service_recent_with_hotspots.temperature_map.set_points(vec![
+            Point { x: 10.0, y: 10.0, value: Some(20.0) },
+            Point { x: 50.0, y: 50.0, value: Some(95.0) },
+            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+        ]);
+        assert!(!service_recent_with_hotspots.should_post(detections_in_row), "Should not post when time interval not met");
+
+        // Simulate enough time passing
+        let mut service_old = DetectionService {
+            last_post_time: Local::now().timestamp() - (CONFIG.output.post_interval * 60) - 1,
+            ..Default::default()
+        };
+        service_old.temperature_map.set_points(vec![
+            Point { x: 10.0, y: 10.0, value: Some(20.0) },
+            Point { x: 50.0, y: 50.0, value: Some(95.0) },
+            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+        ]);
+        assert!(service_old.should_post(detections_in_row), "Should post when time interval is met");
+    }
+
+    #[test]
+    fn test_should_post_consecutive_detections_condition() {
+        // Assume time and hotspot conditions are met
+        let mut service = DetectionService {
+            last_post_time: 0, // Time condition met
+            ..Default::default()
+        };
+        // Simulate hotspots
+        service.temperature_map.set_points(vec![
+            Point { x: 10.0, y: 10.0, value: Some(20.0) },
+            Point { x: 50.0, y: 50.0, value: Some(95.0) },
+            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+        ]);
+
+        let min_frames = CONFIG.detection.minimum_detection_frames;
+        assert!(min_frames > 0, "Minimum frames should be positive");
+
+        // Test below minimum
+        if min_frames > 1 {
+             assert!(!service.should_post(min_frames - 1),
+                "Should not post when consecutive frames are less than minimum");
+        }
+
+        // Test at minimum
+        assert!(service.should_post(min_frames),
+            "Should post when consecutive frames meet minimum");
+
+        // Test above minimum
+        assert!(service.should_post(min_frames + 1),
+            "Should post when consecutive frames exceed minimum");
+    }
+
+    #[test]
+    fn test_should_post_hotspot_condition() {
+        // Assume time and consecutive detections conditions are met
+        let detections_in_row = CONFIG.detection.minimum_detection_frames;
+        let service_no_hotspots = DetectionService {
+            last_post_time: 0, // Time condition met
+            ..Default::default()
+        };
+        // No points added, so no hotspots
+        assert!(!service_no_hotspots.should_post(detections_in_row),
+            "Should not post without heatmap hotspots");
+
+        let mut service_with_hotspots = DetectionService {
+            last_post_time: 0, // Time condition met
+            ..Default::default()
+        };
+        // Add a point likely to be above 90th percentile
+        service_with_hotspots.temperature_map.set_points(vec![
+            Point { x: 10.0, y: 10.0, value: Some(20.0) },
+            Point { x: 50.0, y: 50.0, value: Some(95.0) }, // High value point
+            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+        ]);
+        assert!(service_with_hotspots.should_post(detections_in_row),
+            "Should post with heatmap hotspots");
     }
 
     #[test]
     fn test_minimum_detection_frames() {
         let min_frames = CONFIG.detection.minimum_detection_frames;
         assert!(min_frames > 0); // Sanity check that config has a positive value
-
-        // Below minimum
-        assert!(min_frames - 1 < min_frames);
-
-        // At minimum
-        assert!(min_frames >= min_frames);
-
-        // Above minimum
-        assert!(min_frames + 1 >= min_frames);
-    }
-
-    // Tests for should_save_image time condition
-    #[test]
-    fn test_should_save_image_time_condition() {
-        let service_new = DetectionService::new();
-        assert_eq!(service_new.last_image_save_time, 0);
-
-        let service_old = DetectionService {
-            last_image_save_time: Local::now().timestamp()
-                - (CONFIG.output.image_save_interval * 60)
-                - 1,
-            ..Default::default()
-        };
-        let time_passed = (service_old.last_image_save_time
-            + CONFIG.output.image_save_interval * 60)
-            < Local::now().timestamp();
-        assert!(time_passed); // Time has passed in this case
-
-        let service_recent = DetectionService {
-            last_image_save_time: Local::now().timestamp(),
-            ..Default::default()
-        };
-        let time_passed = (service_recent.last_image_save_time
-            + CONFIG.output.image_save_interval * 60)
-            < Local::now().timestamp();
-        assert!(!time_passed); // Time hasn't passed in this case
     }
 }

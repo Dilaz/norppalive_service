@@ -1,7 +1,5 @@
-use ab_glyph;
 use histogram::Histogram;
 use image::{DynamicImage, Rgba};
-use imageproc;
 use tracing::info;
 
 use crate::error::NorppaliveError;
@@ -87,6 +85,18 @@ impl TemperatureMap {
     /// Set the points and calculate the convex hull polygon
     pub fn set_points(&mut self, points: Vec<Point>) {
         self.points = points;
+        // Also update histogram for hotspot logic
+        if self.histogram.is_some() {
+            // Re-create the histogram to clear it
+            self.histogram = Histogram::new(3, 8).ok();
+            if let Some(hist) = &mut self.histogram {
+                for p in &self.points {
+                    if let Some(value) = p.value {
+                        let _ = hist.increment(value as u64);
+                    }
+                }
+            }
+        }
         self.set_convexhull_polygon();
     }
 
@@ -499,109 +509,6 @@ impl TemperatureMap {
         Ok(())
     }
 
-    /// Find hotspots that exceed the threshold
-    pub fn get_hotspots(&self, threshold: f32) -> Vec<(f32, f32, f32)> {
-        if self.points.is_empty() {
-            return Vec::new();
-        }
-
-        let mut hotspots = Vec::new();
-        let resolution = CONFIG.detection.heatmap_resolution as f32;
-
-        // Create a grid of points to sample for hotspots
-        let grid_size = resolution;
-
-        for x in (self.limits.x_min as u32..self.limits.x_max as u32).step_by(grid_size as usize) {
-            for y in
-                (self.limits.y_min as u32..self.limits.y_max as u32).step_by(grid_size as usize)
-            {
-                let point = Point {
-                    x: x as f32,
-                    y: y as f32,
-                    value: None,
-                };
-                let value = self.get_point_value(self.points.len(), point);
-
-                // If the value exceeds the threshold, add it to hotspots
-                if value >= threshold && value != -255.0 {
-                    hotspots.push((x as f32, y as f32, value));
-                }
-            }
-        }
-
-        // Sort hotspots by value (highest first)
-        hotspots.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
-
-        hotspots
-    }
-
-    /// Check if the map has hotspots that exceed the threshold
-    pub fn has_hotspots(&self, threshold: f32) -> bool {
-        !self.get_hotspots(threshold).is_empty()
-    }
-
-    /// Draw hotspots on the image
-    pub fn draw_hotspots(
-        &self,
-        base_image: &mut DynamicImage,
-        hotspots: &[(f32, f32, f32)],
-    ) -> Result<(), NorppaliveError> {
-        if hotspots.is_empty() {
-            return Ok(());
-        }
-
-        let mut rgba_image = base_image.to_rgba8();
-
-        for &(x, y, value) in hotspots {
-            // Draw a bright highlight for each hotspot
-            let radius = CONFIG.detection.heatmap_resolution as i32 + 4;
-
-            // Bright yellow for hotspot outlines
-            for dx in -radius..=radius {
-                for dy in -radius..=radius {
-                    let dist_sq = dx * dx + dy * dy;
-                    if dist_sq <= radius * radius && dist_sq > (radius - 2) * (radius - 2) {
-                        let px = x as i32 + dx;
-                        let py = y as i32 + dy;
-
-                        if px >= 0 && px < self.width as i32 && py >= 0 && py < self.height as i32 {
-                            rgba_image.put_pixel(px as u32, py as u32, Rgba([255, 255, 0, 255]));
-                        }
-                    }
-                }
-            }
-
-            // Skip font rendering in tests
-            if !cfg!(test) {
-                // Add heat value text using imageproc if we have the font
-                match ab_glyph::FontRef::try_from_slice(include_bytes!("../DejaVuSans.ttf")) {
-                    Ok(font) => {
-                        let scale = ab_glyph::PxScale { x: 16.0, y: 16.0 };
-                        let value_text = format!("{:.1}", value);
-
-                        imageproc::drawing::draw_text_mut(
-                            &mut rgba_image,
-                            Rgba([255, 255, 255, 255]),
-                            x as i32 + radius + 4,
-                            y as i32 - 8,
-                            scale,
-                            &font,
-                            &value_text,
-                        );
-                    }
-                    Err(e) => {
-                        // Just log the error but continue
-                        info!("Could not load font for hotspot text: {}", e);
-                    }
-                }
-            }
-        }
-
-        *base_image = DynamicImage::ImageRgba8(rgba_image);
-
-        Ok(())
-    }
-
     /// Get hotspots using histogram data
     pub fn get_histogram_hotspots(
         &self,
@@ -632,7 +539,7 @@ impl TemperatureMap {
     /// Check if the map has hotspots based on histogram percentiles
     pub fn has_histogram_hotspots(&self, percentile_threshold: f64) -> bool {
         self.get_histogram_hotspots(percentile_threshold)
-            .map_or(false, |h| !h.is_empty())
+            .is_some_and(|h| !h.is_empty())
     }
 
     /// Apply decay to all points based on the decay rate
@@ -768,13 +675,5 @@ mod tests {
         assert_eq!(hotspots_high.len(), 1);
         assert_eq!(hotspots_medium.len(), 2);
         assert_eq!(hotspots_low.len(), 3);
-
-        // Test has_hotspots function - manually verify with the inserted points
-        assert!(map.has_hotspots(5.0)); // Should find all points
-        assert!(!map.has_hotspots(50.0)); // Should find no points
-
-        // Test drawing hotspots
-        let mut img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
-        assert!(map.draw_hotspots(&mut img, &hotspots_medium).is_ok());
     }
 }
