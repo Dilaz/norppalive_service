@@ -64,7 +64,7 @@ impl OutputService {
         // Get a random message
         let messages = &CONFIG.output.messages;
         let mut message = messages
-            .get(rand::thread_rng().gen_range(0..messages.len()))
+            .get(rand::rng().random_range(0..messages.len()))
             .unwrap()
             .to_owned();
 

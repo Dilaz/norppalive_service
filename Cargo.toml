@@ -6,33 +6,33 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ab_glyph = "0.2.28"
-atrium-api = "0.24.9"
-atrium-xrpc = "0.12.0"
-atrium-xrpc-client = { version = "0.5.10", features = ["reqwest"] }
+ab_glyph = "0.2.29"
+atrium-api = "0.25.3"
+atrium-xrpc = "0.12.3"
+atrium-xrpc-client = { version = "0.5.14", features = ["reqwest"] }
 base64 = "0.22.1"
-chrono = "0.4.39"
-clap = { version = "4.5.23", features = ["derive"] }
+chrono = "0.4.41"
+clap = { version = "4.5.37", features = ["derive"] }
 enum_dispatch = "0.3.13"
-ffmpeg-next = "7.0.4"
-futures = "0.3.30"
+ffmpeg-next = "7.1.0"
+futures = "0.3.31"
 histogram = "0.11.3"
-image = "0.25.5"
+image = "0.25.6"
 imageproc = "0.25.0"
-ipld-core = { version = "0.4.1", features = ["serde"] }
+ipld-core = { version = "0.4.2", features = ["serde"] }
 lazy_static = "1.5.0"
-megalodon = "0.14.2"
-miette = { version = "7.4.0", features = ["fancy"] }
-rand = "0.8.5"
+megalodon = "1.0.0"
+miette = { version = "7.6.0", features = ["fancy"] }
+rand = "0.9.1"
 rdkafka = "0.37.0"
-reqwest = { version = "0.12.12", features = ["multipart", "json", "blocking", "stream"] }
+reqwest = { version = "0.12.15", features = ["multipart", "json", "blocking", "stream"] }
 reqwest_old = { version = "0.11.27", features = ["multipart", "json", "blocking", "stream"], package = "reqwest" }
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.134"
-thiserror = "2.0.9"
-tokio = { version = "1.42.0", features = ["full"] }
-tokio-util = "0.7.13"
-toml = "0.8.19"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+thiserror = "2.0.12"
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-util = "0.7.15"
+toml = "0.8.22"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 twitter-api-v1 = { version = "0.2.1", features = ["tokio", "with_tokio_fs"] }

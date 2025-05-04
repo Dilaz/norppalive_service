@@ -1,5 +1,5 @@
 use atrium_api::{
-    agent::{store::MemorySessionStore, AtpAgent},
+    agent::{atp_agent::AtpAgent, atp_agent::store::MemorySessionStore},
     com::atproto::repo::create_record::InputData,
     types::{
         string::{AtIdentifier, Handle, Nsid},
