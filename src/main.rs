@@ -4,12 +4,12 @@ use std::mem;
 use std::time::Duration;
 
 use clap::{command, Parser};
+use ffmpeg::codec::context::Context as CodecContext;
 use ffmpeg::format::{input, Pixel};
 use ffmpeg::media::Type;
 use ffmpeg::software::scaling::{Context, Flags};
 use ffmpeg::util::frame::video::Video;
 use ffmpeg::Discard;
-use ffmpeg::codec::context::Context as CodecContext;
 use lazy_static::lazy_static;
 use miette::Result;
 use std::process::Command;
@@ -150,7 +150,15 @@ async fn main() -> Result<(), NorppaliveError> {
                 SAVE_IMAGE.store(true, Relaxed);
                 info!("Waiting for new image...");
                 while SAVE_IMAGE.load(Relaxed) {
+                    if SHUTDOWN.load(Relaxed) {
+                        info!("Shutdown detected in inner loop, breaking out.");
+                        break;
+                    }
                     sleep(Duration::from_millis(20)).await;
+                }
+                if SHUTDOWN.load(Relaxed) {
+                    info!("Shutdown detected after inner loop, breaking out of detection thread.");
+                    break;
                 }
                 info!("Got new image!");
                 if let Ok(detection_result) = detection_service.do_detection(&filename).await {

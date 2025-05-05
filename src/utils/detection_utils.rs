@@ -8,8 +8,8 @@ use serde_json;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::fs::File;
-use tracing::{debug, error, info};
 use tokio::io::AsyncReadExt;
+use tracing::{debug, error, info};
 
 use crate::{
     error::NorppaliveError, utils::image_utils::draw_boxes_on_image,
@@ -45,7 +45,9 @@ where
 {
     let f = f32::deserialize(deserializer)?;
     if f * CONFIDENCE_MULTIPLIER > 255.0 {
-        return Err(<D::Error as serde::de::Error>::custom("Confidence value out of range"));
+        return Err(<D::Error as serde::de::Error>::custom(
+            "Confidence value out of range",
+        ));
     }
     Ok((f * CONFIDENCE_MULTIPLIER) as u8)
 }
@@ -262,7 +264,14 @@ impl DetectionService {
         detection_result: &'a [DetectionResult],
     ) -> Vec<&'a DetectionResult> {
         // Helper function to check if a point is inside a box
-        fn point_inside_box(x: u32, y: u32, box_x: u32, box_y: u32, box_width: u32, box_height: u32) -> bool {
+        fn point_inside_box(
+            x: u32,
+            y: u32,
+            box_x: u32,
+            box_y: u32,
+            box_width: u32,
+            box_height: u32,
+        ) -> bool {
             x >= box_x && x <= box_x + box_width && y >= box_y && y <= box_y + box_height
         }
 
@@ -279,13 +288,15 @@ impl DetectionService {
                     let box_width = detection.r#box[2];
                     let box_height = detection.r#box[3];
                     let inside = point_inside_box(x, y, box_x, box_y, box_width, box_height);
-                    debug!("Ignore point: {:?}, Box: {:?}: inside={}", ignore_point, detection.r#box, inside);
+                    debug!(
+                        "Ignore point: {:?}, Box: {:?}: inside={}",
+                        ignore_point, detection.r#box, inside
+                    );
                     inside
                 })
             })
             .collect()
     }
-
 
     /**
      * Process alerts based on detection results and hotspots
@@ -427,13 +438,13 @@ impl DetectionService {
         }
 
         // Check if minimum consecutive detections are met
-        let consecutive_detections_condition = detections_in_row >= CONFIG.detection.minimum_detection_frames;
+        let consecutive_detections_condition =
+            detections_in_row >= CONFIG.detection.minimum_detection_frames;
 
         if !consecutive_detections_condition {
             debug!(
                 "Post condition not met: Consecutive detections ({}) less than minimum ({}).",
-                detections_in_row,
-                CONFIG.detection.minimum_detection_frames
+                detections_in_row, CONFIG.detection.minimum_detection_frames
             );
             return false;
         }
@@ -450,7 +461,10 @@ impl DetectionService {
         }
 
         // All conditions met
-        info!("Post conditions met: Time, consecutive detections ({}), and heatmap hotspots.", detections_in_row);
+        info!(
+            "Post conditions met: Time, consecutive detections ({}), and heatmap hotspots.",
+            detections_in_row
+        );
         true
     }
 
@@ -501,11 +515,26 @@ mod tests {
         let mut service_new_with_hotspots = service_new;
         // Simulate adding a point to potentially create a hotspot state (crude simulation)
         service_new_with_hotspots.temperature_map.set_points(vec![
-            Point { x: 10.0, y: 10.0, value: Some(20.0) },
-            Point { x: 50.0, y: 50.0, value: Some(95.0) }, // High value point
-            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+            Point {
+                x: 10.0,
+                y: 10.0,
+                value: Some(20.0),
+            },
+            Point {
+                x: 50.0,
+                y: 50.0,
+                value: Some(95.0),
+            }, // High value point
+            Point {
+                x: 90.0,
+                y: 90.0,
+                value: Some(30.0),
+            },
         ]);
-        assert!(service_new_with_hotspots.should_post(detections_in_row), "Should post when time is 0");
+        assert!(
+            service_new_with_hotspots.should_post(detections_in_row),
+            "Should post when time is 0"
+        );
 
         let service_recent = DetectionService {
             last_post_time: Local::now().timestamp(),
@@ -514,12 +543,29 @@ mod tests {
 
         // Simulate hotspots again for the recent post scenario
         let mut service_recent_with_hotspots = service_recent;
-        service_recent_with_hotspots.temperature_map.set_points(vec![
-            Point { x: 10.0, y: 10.0, value: Some(20.0) },
-            Point { x: 50.0, y: 50.0, value: Some(95.0) },
-            Point { x: 90.0, y: 90.0, value: Some(30.0) },
-        ]);
-        assert!(!service_recent_with_hotspots.should_post(detections_in_row), "Should not post when time interval not met");
+        service_recent_with_hotspots
+            .temperature_map
+            .set_points(vec![
+                Point {
+                    x: 10.0,
+                    y: 10.0,
+                    value: Some(20.0),
+                },
+                Point {
+                    x: 50.0,
+                    y: 50.0,
+                    value: Some(95.0),
+                },
+                Point {
+                    x: 90.0,
+                    y: 90.0,
+                    value: Some(30.0),
+                },
+            ]);
+        assert!(
+            !service_recent_with_hotspots.should_post(detections_in_row),
+            "Should not post when time interval not met"
+        );
 
         // Simulate enough time passing
         let mut service_old = DetectionService {
@@ -527,11 +573,26 @@ mod tests {
             ..Default::default()
         };
         service_old.temperature_map.set_points(vec![
-            Point { x: 10.0, y: 10.0, value: Some(20.0) },
-            Point { x: 50.0, y: 50.0, value: Some(95.0) },
-            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+            Point {
+                x: 10.0,
+                y: 10.0,
+                value: Some(20.0),
+            },
+            Point {
+                x: 50.0,
+                y: 50.0,
+                value: Some(95.0),
+            },
+            Point {
+                x: 90.0,
+                y: 90.0,
+                value: Some(30.0),
+            },
         ]);
-        assert!(service_old.should_post(detections_in_row), "Should post when time interval is met");
+        assert!(
+            service_old.should_post(detections_in_row),
+            "Should post when time interval is met"
+        );
     }
 
     #[test]
@@ -543,9 +604,21 @@ mod tests {
         };
         // Simulate hotspots
         service.temperature_map.set_points(vec![
-            Point { x: 10.0, y: 10.0, value: Some(20.0) },
-            Point { x: 50.0, y: 50.0, value: Some(95.0) },
-            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+            Point {
+                x: 10.0,
+                y: 10.0,
+                value: Some(20.0),
+            },
+            Point {
+                x: 50.0,
+                y: 50.0,
+                value: Some(95.0),
+            },
+            Point {
+                x: 90.0,
+                y: 90.0,
+                value: Some(30.0),
+            },
         ]);
 
         let min_frames = CONFIG.detection.minimum_detection_frames;
@@ -553,17 +626,23 @@ mod tests {
 
         // Test below minimum
         if min_frames > 1 {
-             assert!(!service.should_post(min_frames - 1),
-                "Should not post when consecutive frames are less than minimum");
+            assert!(
+                !service.should_post(min_frames - 1),
+                "Should not post when consecutive frames are less than minimum"
+            );
         }
 
         // Test at minimum
-        assert!(service.should_post(min_frames),
-            "Should post when consecutive frames meet minimum");
+        assert!(
+            service.should_post(min_frames),
+            "Should post when consecutive frames meet minimum"
+        );
 
         // Test above minimum
-        assert!(service.should_post(min_frames + 1),
-            "Should post when consecutive frames exceed minimum");
+        assert!(
+            service.should_post(min_frames + 1),
+            "Should post when consecutive frames exceed minimum"
+        );
     }
 
     #[test]
@@ -575,8 +654,10 @@ mod tests {
             ..Default::default()
         };
         // No points added, so no hotspots
-        assert!(!service_no_hotspots.should_post(detections_in_row),
-            "Should not post without heatmap hotspots");
+        assert!(
+            !service_no_hotspots.should_post(detections_in_row),
+            "Should not post without heatmap hotspots"
+        );
 
         let mut service_with_hotspots = DetectionService {
             last_post_time: 0, // Time condition met
@@ -584,12 +665,26 @@ mod tests {
         };
         // Add a point likely to be above 90th percentile
         service_with_hotspots.temperature_map.set_points(vec![
-            Point { x: 10.0, y: 10.0, value: Some(20.0) },
-            Point { x: 50.0, y: 50.0, value: Some(95.0) }, // High value point
-            Point { x: 90.0, y: 90.0, value: Some(30.0) },
+            Point {
+                x: 10.0,
+                y: 10.0,
+                value: Some(20.0),
+            },
+            Point {
+                x: 50.0,
+                y: 50.0,
+                value: Some(95.0),
+            }, // High value point
+            Point {
+                x: 90.0,
+                y: 90.0,
+                value: Some(30.0),
+            },
         ]);
-        assert!(service_with_hotspots.should_post(detections_in_row),
-            "Should post with heatmap hotspots");
+        assert!(
+            service_with_hotspots.should_post(detections_in_row),
+            "Should post with heatmap hotspots"
+        );
     }
 
     #[test]

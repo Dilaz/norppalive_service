@@ -1,5 +1,5 @@
 use atrium_api::{
-    agent::{atp_agent::AtpAgent, atp_agent::store::MemorySessionStore},
+    agent::{atp_agent::store::MemorySessionStore, atp_agent::AtpAgent},
     com::atproto::repo::create_record::InputData,
     types::{
         string::{AtIdentifier, Handle, Nsid},
@@ -45,20 +45,27 @@ impl SocialMediaService for BlueskyService {
                 collection: Nsid::new(BLUESKY_COLLECTION.into()).unwrap(),
                 repo: AtIdentifier::Handle(Handle::new((&CONFIG.bluesky.handle).into()).unwrap()),
                 record: Unknown::Object({
-                    let post_type = DataModel::try_from(Ipld::String(BLUESKY_COLLECTION.to_string())).unwrap();
+                    let post_type =
+                        DataModel::try_from(Ipld::String(BLUESKY_COLLECTION.to_string())).unwrap();
                     let text = DataModel::try_from(Ipld::String(message.into())).unwrap();
                     let created_at =
                         DataModel::try_from(Ipld::String(chrono::Utc::now().to_rfc3339())).unwrap();
 
                     let image_map = Ipld::Map({
                         std::collections::BTreeMap::from([
-                            ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
+                            (
+                                "$type".to_string(),
+                                Ipld::String(BLUESKY_BLOB_TYPE.to_string()),
+                            ),
                             ("alt".to_string(), Ipld::String("".to_string())),
                             (
                                 "image".to_string(),
                                 Ipld::Map({
                                     std::collections::BTreeMap::from([
-                                        ("$type".to_string(), Ipld::String(BLUESKY_BLOB_TYPE.to_string())),
+                                        (
+                                            "$type".to_string(),
+                                            Ipld::String(BLUESKY_BLOB_TYPE.to_string()),
+                                        ),
                                         ("size".to_string(), Ipld::Integer(blob_ref.size as i128)),
                                         (
                                             "ref".to_string(),
@@ -69,7 +76,10 @@ impl SocialMediaService for BlueskyService {
                                                 )])
                                             }),
                                         ),
-                                        ("mimeType".to_string(), Ipld::String(blob_ref.mime_type.clone())),
+                                        (
+                                            "mimeType".to_string(),
+                                            Ipld::String(blob_ref.mime_type.clone()),
+                                        ),
                                     ])
                                 }),
                             ),
@@ -80,7 +90,10 @@ impl SocialMediaService for BlueskyService {
 
                     let embed_map = DataModel::try_from(Ipld::Map({
                         std::collections::BTreeMap::from([
-                            ("$type".to_string(), Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string())),
+                            (
+                                "$type".to_string(),
+                                Ipld::String(BLUESKY_COLLECTION_IMAGE.to_string()),
+                            ),
                             ("images".to_string(), images_list),
                         ])
                     }))?;
