@@ -263,16 +263,16 @@ impl DetectionService {
         &self,
         detection_result: &'a [DetectionResult],
     ) -> Vec<&'a DetectionResult> {
-        // Helper function to check if a point is inside a box
+        // Helper function to check if a point is inside a box (top-left and bottom-right coordinates)
         fn point_inside_box(
             x: u32,
             y: u32,
-            box_x: u32,
-            box_y: u32,
-            box_width: u32,
-            box_height: u32,
+            box_x1: u32,
+            box_y1: u32,
+            box_x2: u32,
+            box_y2: u32,
         ) -> bool {
-            x >= box_x && x <= box_x + box_width && y >= box_y && y <= box_y + box_height
+            x >= box_x1 && x <= box_x2 && y >= box_y1 && y <= box_y2
         }
 
         detection_result
@@ -283,11 +283,11 @@ impl DetectionService {
                 !CONFIG.detection.ignore_points.iter().any(|ignore_point| {
                     let x = ignore_point.x;
                     let y = ignore_point.y;
-                    let box_x = detection.r#box[0];
-                    let box_y = detection.r#box[1];
+                    let box_x1 = detection.r#box[0];
+                    let box_y1 = detection.r#box[1];
                     let box_x2 = detection.r#box[2];
                     let box_y2 = detection.r#box[3];
-                    let inside = point_inside_box(x, y, box_x, box_y, box_x2 - box_x, box_y2 - box_y);
+                    let inside = point_inside_box(x, y, box_x1, box_y1, box_x2, box_y2);
                     debug!(
                         "Ignore point: {:?}, Box: {:?}: inside={}",
                         ignore_point, detection.r#box, inside
