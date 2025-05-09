@@ -285,9 +285,9 @@ impl DetectionService {
                     let y = ignore_point.y;
                     let box_x = detection.r#box[0];
                     let box_y = detection.r#box[1];
-                    let box_width = detection.r#box[2];
-                    let box_height = detection.r#box[3];
-                    let inside = point_inside_box(x, y, box_x, box_y, box_width, box_height);
+                    let box_x2 = detection.r#box[2];
+                    let box_y2 = detection.r#box[3];
+                    let inside = point_inside_box(x, y, box_x, box_y, box_x2 - box_x, box_y2 - box_y);
                     debug!(
                         "Ignore point: {:?}, Box: {:?}: inside={}",
                         ignore_point, detection.r#box, inside
