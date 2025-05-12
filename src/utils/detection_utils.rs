@@ -220,7 +220,10 @@ impl DetectionService {
         // -Save image if any detection is above save_image_confidence but below minimum_detection_percentage ---
         let save_image_candidates: Vec<&DetectionResult> = detection_result
             .iter()
-            .filter(|d| d.conf >= CONFIG.detection.save_image_confidence && d.conf < CONFIG.detection.minimum_detection_percentage)
+            .filter(|d| {
+                d.conf >= CONFIG.detection.save_image_confidence
+                    && d.conf < CONFIG.detection.minimum_detection_percentage
+            })
             .collect();
         if !save_image_candidates.is_empty() {
             // Check image save interval
@@ -526,8 +529,8 @@ impl DetectionService {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::temperature_map::Point;
     use super::*;
+    use crate::utils::temperature_map::Point;
     use std::fs;
 
     #[test]
@@ -753,6 +756,9 @@ mod tests {
             let entry = entry.unwrap();
             entry.file_name().to_string_lossy().starts_with("frame_")
         });
-        assert!(found, "Image should be saved when detection is above save_image_confidence");
+        assert!(
+            found,
+            "Image should be saved when detection is above save_image_confidence"
+        );
     }
 }
