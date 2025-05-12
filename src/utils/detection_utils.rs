@@ -194,6 +194,9 @@ impl DetectionService {
 
     /**
      * Process detection results and trigger appropriate actions
+     *
+     * - If any detection result has confidence >= save_image_confidence but < minimum_detection_percentage, saves the image (does not count as detection or post)
+     * - Otherwise, processes detections as before
      */
     pub async fn process_detection(
         &mut self,
@@ -212,6 +215,22 @@ impl DetectionService {
             self.save_heatmap_visualization(&self.temperature_map);
             // Reset consecutive detections if no seals are found
             return Some(0);
+        }
+
+        // -Save image if any detection is above save_image_confidence but below minimum_detection_percentage ---
+        let save_image_candidates: Vec<&DetectionResult> = detection_result
+            .iter()
+            .filter(|d| d.conf >= CONFIG.detection.save_image_confidence && d.conf < CONFIG.detection.minimum_detection_percentage)
+            .collect();
+        if !save_image_candidates.is_empty() {
+            // Check image save interval
+            let time_condition = self.last_image_save_time == 0
+                || (self.last_image_save_time + CONFIG.output.image_save_interval * 60)
+                    < Local::now().timestamp();
+            if time_condition {
+                info!("Saving image due to save_image_confidence threshold");
+                self.save_detection_image(&save_image_candidates);
+            }
         }
 
         info!("Found {} seals", detection_result.len());
@@ -344,8 +363,9 @@ impl DetectionService {
         info!("Saving image to a file based on heatmap detection!");
 
         let image_result = draw_boxes_on_image(acceptable_detections);
-        if let Ok(image) = image_result {
-            let timestamp = Local::now().to_string();
+        if let Ok(marked_image) = image_result {
+            // Create filesystem-friendly timestamp (YYYY-MM-DD_HH-MM-SS)
+            let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
             let output_folder = &CONFIG.output.output_file_folder;
 
             // Ensure output directory exists
@@ -357,12 +377,20 @@ impl DetectionService {
                 return;
             }
 
-            let image_filename = format!("{}/frame_{}.jpg", output_folder, timestamp);
-
-            if let Err(err) = image.save(&image_filename) {
-                error!("Could not save image: {}", err);
+            // Save the marked image
+            let marked_image_filename = format!("{}/detection_{}.jpg", output_folder, timestamp);
+            if let Err(err) = marked_image.save(&marked_image_filename) {
+                error!("Could not save marked image: {}", err);
             } else {
-                info!("Image saved to file: {}", image_filename);
+                info!("Marked image saved to file: {}", marked_image_filename);
+            }
+
+            // Copy the original image
+            let original_image_filename = format!("{}/original_{}.jpg", output_folder, timestamp);
+            if let Err(err) = std::fs::copy(&CONFIG.image_filename, &original_image_filename) {
+                error!("Could not copy original image: {}", err);
+            } else {
+                info!("Original image saved to file: {}", original_image_filename);
                 self.last_image_save_time = Local::now().timestamp();
             }
         } else {
@@ -499,10 +527,9 @@ impl DetectionService {
 #[cfg(test)]
 mod tests {
     use crate::utils::temperature_map::Point;
-
     use super::*;
+    use std::fs;
 
-    // Test for individual parts of should_post
     #[test]
     fn test_should_post_time_condition() {
         // Assume other conditions are met for this test
@@ -691,5 +718,41 @@ mod tests {
     fn test_minimum_detection_frames() {
         let min_frames = CONFIG.detection.minimum_detection_frames;
         assert!(min_frames > 0); // Sanity check that config has a positive value
+    }
+
+    #[test]
+    fn test_save_image_confidence_triggers_save() {
+        let mut service = DetectionService::default();
+        // Set config thresholds
+        let save_conf = CONFIG.detection.save_image_confidence;
+        // Create a detection result just above save_image_confidence but below minimum_detection_percentage
+        let detection = DetectionResult {
+            r#box: [10, 10, 50, 50],
+            cls: 0,
+            cls_name: "seal".to_string(),
+            conf: save_conf + 1,
+        };
+        let detections = vec![detection];
+        // Remove any previously saved test image
+        let output_folder = &CONFIG.output.output_file_folder;
+        let pattern = format!("{}/frame_", output_folder);
+        let _ = fs::create_dir_all(output_folder);
+        for entry in fs::read_dir(output_folder).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.to_string_lossy().contains(&pattern) {
+                let _ = fs::remove_file(path);
+            }
+        }
+        // Call process_detection
+        let result = futures::executor::block_on(service.process_detection(&detections, 0));
+        // It should not increment detections_in_row
+        assert_eq!(result, Some(0));
+        // Check that an image was saved
+        let found = fs::read_dir(output_folder).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry.file_name().to_string_lossy().starts_with("frame_")
+        });
+        assert!(found, "Image should be saved when detection is above save_image_confidence");
     }
 }

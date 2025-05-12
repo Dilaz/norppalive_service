@@ -32,6 +32,7 @@ pub struct Detection {
     pub heatmap_decay_rate: f32,
     pub heatmap_threshold: f32,
     pub heatmap_save_interval: i64, // How often to save heatmap images (in minutes)
+    pub save_image_confidence: u8,
 }
 
 #[derive(Deserialize, Debug)]
