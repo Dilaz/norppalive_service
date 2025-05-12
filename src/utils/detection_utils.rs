@@ -738,12 +738,11 @@ mod tests {
         let detections = vec![detection];
         // Remove any previously saved test image
         let output_folder = &CONFIG.output.output_file_folder;
-        let pattern = format!("{}/frame_", output_folder);
         let _ = fs::create_dir_all(output_folder);
         for entry in fs::read_dir(output_folder).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            if path.to_string_lossy().contains(&pattern) {
+            if path.to_string_lossy().contains("detection_") || path.to_string_lossy().contains("original_") {
                 let _ = fs::remove_file(path);
             }
         }
@@ -751,14 +750,22 @@ mod tests {
         let result = futures::executor::block_on(service.process_detection(&detections, 0));
         // It should not increment detections_in_row
         assert_eq!(result, Some(0));
-        // Check that an image was saved
-        let found = fs::read_dir(output_folder).unwrap().any(|entry| {
+        // Check that images were saved
+        let detection_found = fs::read_dir(output_folder).unwrap().any(|entry| {
             let entry = entry.unwrap();
-            entry.file_name().to_string_lossy().starts_with("frame_")
+            entry.file_name().to_string_lossy().starts_with("detection_")
+        });
+        let original_found = fs::read_dir(output_folder).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry.file_name().to_string_lossy().starts_with("original_")
         });
         assert!(
-            found,
-            "Image should be saved when detection is above save_image_confidence"
+            detection_found,
+            "Detection image should be saved when detection is above save_image_confidence"
+        );
+        assert!(
+            original_found,
+            "Original image should be saved when detection is above save_image_confidence"
         );
     }
 }
