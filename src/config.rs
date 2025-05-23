@@ -89,4 +89,5 @@ pub struct Bluesky {
 pub struct Kafka {
     pub broker: String,
     pub topic: String,
+    pub detection_topic: String,
 }

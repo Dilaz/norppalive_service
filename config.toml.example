@@ -57,3 +57,4 @@ password = ""
 [kafka]
 broker = "localhost:19092"
 topic = "detection"
+detection_topic = "norppalive-detections"

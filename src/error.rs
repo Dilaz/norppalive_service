@@ -43,8 +43,9 @@ pub enum NorppaliveError {
         #[from] atrium_xrpc::error::Error<atrium_api::com::atproto::repo::upload_blob::Error>,
     ),
 
+    // Box the largest error variant to reduce overall enum size
     #[error(transparent)]
-    MegalodonError(#[from] megalodon::error::Error),
+    MegalodonError(Box<megalodon::error::Error>),
 
     #[error(transparent)]
     KafkaError(#[from] rdkafka::error::KafkaError),
@@ -54,4 +55,11 @@ pub enum NorppaliveError {
 
     #[error("Some other error: {0}")]
     Other(String),
+}
+
+// Manual From implementation for the boxed MegalodonError
+impl From<megalodon::error::Error> for NorppaliveError {
+    fn from(err: megalodon::error::Error) -> Self {
+        NorppaliveError::MegalodonError(Box::new(err))
+    }
 }
