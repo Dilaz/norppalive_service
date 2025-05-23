@@ -12,8 +12,9 @@ use tokio::io::AsyncReadExt;
 use tracing::{debug, error, info};
 
 use crate::{
-    error::NorppaliveError, utils::image_utils::draw_boxes_on_image,
-    utils::temperature_map::TemperatureMap, CONFIG, SHUTDOWN,
+    error::NorppaliveError, services::DetectionKafkaService,
+    utils::image_utils::draw_boxes_on_image, utils::temperature_map::TemperatureMap, CONFIG,
+    SHUTDOWN,
 };
 
 use super::output::OutputService;
@@ -70,6 +71,7 @@ where
 
 pub struct DetectionService {
     output_service: OutputService,
+    detection_kafka_service: DetectionKafkaService,
     last_post_time: i64,
     last_image_save_time: i64,
     last_detection_time: i64,
@@ -87,6 +89,7 @@ impl DetectionService {
     pub fn new() -> Self {
         Self {
             output_service: OutputService::default(),
+            detection_kafka_service: DetectionKafkaService::default(),
             last_post_time: 0,
             last_image_save_time: 0,
             last_detection_time: 0,
@@ -232,7 +235,7 @@ impl DetectionService {
                     < Local::now().timestamp();
             if time_condition {
                 info!("Saving image due to save_image_confidence threshold");
-                self.save_detection_image(&save_image_candidates);
+                self.save_detection_image(&save_image_candidates).await;
             }
         }
 
@@ -332,7 +335,7 @@ impl DetectionService {
         if self.should_post(detections_in_row) {
             self.post_to_social_media(acceptable_detections).await;
         } else if self.should_save_image() {
-            self.save_detection_image(acceptable_detections);
+            self.save_detection_image(acceptable_detections).await;
         }
     }
 
@@ -362,7 +365,7 @@ impl DetectionService {
     /**
      * Save detection image to a file
      */
-    fn save_detection_image(&mut self, acceptable_detections: &[&DetectionResult]) {
+    async fn save_detection_image(&mut self, acceptable_detections: &[&DetectionResult]) {
         info!("Saving image to a file based on heatmap detection!");
 
         let image_result = draw_boxes_on_image(acceptable_detections);
@@ -384,6 +387,7 @@ impl DetectionService {
             let marked_image_filename = format!("{}/detection_{}.jpg", output_folder, timestamp);
             if let Err(err) = marked_image.save(&marked_image_filename) {
                 error!("Could not save marked image: {}", err);
+                return;
             } else {
                 info!("Marked image saved to file: {}", marked_image_filename);
             }
@@ -392,9 +396,35 @@ impl DetectionService {
             let original_image_filename = format!("{}/original_{}.jpg", output_folder, timestamp);
             if let Err(err) = std::fs::copy(&CONFIG.image_filename, &original_image_filename) {
                 error!("Could not copy original image: {}", err);
+                return;
             } else {
                 info!("Original image saved to file: {}", original_image_filename);
                 self.last_image_save_time = Local::now().timestamp();
+            }
+
+            // Send Kafka notification (non-blocking - errors won't prevent image saving)
+            let detection_data: Vec<DetectionResult> = acceptable_detections
+                .iter()
+                .map(|&detection| DetectionResult {
+                    r#box: detection.r#box,
+                    cls: detection.cls,
+                    cls_name: detection.cls_name.clone(),
+                    conf: detection.conf,
+                })
+                .collect();
+
+            match self
+                .detection_kafka_service
+                .send_detection_notification(&detection_data, &marked_image_filename, "image_save")
+                .await
+            {
+                Ok(_) => {
+                    debug!("Successfully sent detection notification to Kafka");
+                }
+                Err(err) => {
+                    error!("Failed to send detection notification to Kafka: {}", err);
+                    // Note: We don't return here - Kafka failures should not prevent image saving
+                }
             }
         } else {
             error!("Could not create image for saving");
