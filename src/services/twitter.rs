@@ -7,11 +7,84 @@ use twitter_api_v1::{
 };
 use twitter_v2::{authorization::Oauth1aToken, id::NumericId, TwitterApi};
 
-use crate::{error::NorppaliveError, CONFIG};
+use crate::{config::CONFIG, error::NorppaliveError};
 
 use super::SocialMediaService;
 
-#[derive(Debug, Default)]
+// Trait for Twitter service abstraction
+#[allow(dead_code)]
+pub trait TwitterServiceTrait {
+    fn post(
+        &self,
+        message: &str,
+        image_path: &str,
+    ) -> impl std::future::Future<Output = Result<(), NorppaliveError>> + Send;
+    fn name(&self) -> &'static str;
+}
+
+// Mock implementation for testing
+#[cfg(test)]
+pub struct MockTwitterService {
+    pub should_fail: bool,
+    pub posts_sent: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+#[cfg(test)]
+impl MockTwitterService {
+    #[allow(dead_code)]
+    pub fn with_failure(mut self, should_fail: bool) -> Self {
+        self.should_fail = should_fail;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn get_posts_sent(&self) -> Vec<(String, String)> {
+        self.posts_sent.lock().unwrap().clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_post_count(&self) -> usize {
+        self.posts_sent.lock().unwrap().len()
+    }
+}
+
+#[cfg(test)]
+impl TwitterServiceTrait for MockTwitterService {
+    #[allow(clippy::manual_async_fn)]
+    fn post(
+        &self,
+        message: &str,
+        image_path: &str,
+    ) -> impl std::future::Future<Output = Result<(), NorppaliveError>> + Send {
+        let should_fail = self.should_fail;
+        let posts_sent = self.posts_sent.clone();
+        let message = message.to_string();
+        let image_path = image_path.to_string();
+
+        async move {
+            if should_fail {
+                return Err(NorppaliveError::Other("Mock Twitter failure".to_string()));
+            }
+
+            {
+                let mut posts = posts_sent.lock().unwrap();
+                posts.push((message.clone(), image_path.clone()));
+            }
+
+            info!(
+                "Mock: Posted to Twitter - message: {}, image: {}",
+                message, image_path
+            );
+            Ok(())
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "MockTwitter"
+    }
+}
+
+#[derive(Clone)]
 pub struct TwitterService;
 
 impl std::fmt::Display for TwitterService {

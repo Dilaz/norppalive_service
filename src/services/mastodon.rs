@@ -4,11 +4,11 @@ use megalodon::{
 };
 use tracing::{debug, info};
 
-use crate::{error::NorppaliveError, CONFIG};
+use crate::{config::CONFIG, error::NorppaliveError};
 
 use super::SocialMediaService;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MastodonService;
 
 impl SocialMediaService for MastodonService {

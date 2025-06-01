@@ -2,9 +2,9 @@ use histogram::Histogram;
 use image::{DynamicImage, Rgba};
 use tracing::info;
 
+use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 use crate::utils::detection_utils::DetectionResult;
-use crate::CONFIG;
 
 /// Point structure representing x,y coordinates and an optional value
 #[derive(Debug, Clone, Copy)]
@@ -15,6 +15,7 @@ pub struct Point {
 }
 
 /// TemperatureMap structure for heat visualization
+#[derive(Default, Debug, Clone)]
 pub struct TemperatureMap {
     pub width: u32,
     pub height: u32,
@@ -24,7 +25,7 @@ pub struct TemperatureMap {
     pub histogram: Option<Histogram>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct Limits {
     pub x_min: f32,
     pub x_max: f32,
