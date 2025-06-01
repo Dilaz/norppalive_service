@@ -1,27 +1,34 @@
 use chrono::Local;
 use image;
 use image::DynamicImage;
+use lazy_static::lazy_static;
 use miette::Result;
 use reqwest::{multipart, Client};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tracing::{debug, error, info};
 
 use crate::{
-    error::NorppaliveError, services::DetectionKafkaService,
-    utils::image_utils::draw_boxes_on_image, utils::temperature_map::TemperatureMap, CONFIG,
-    SHUTDOWN,
+    config::CONFIG, error::NorppaliveError, services::DetectionKafkaService,
+    utils::image_utils::draw_boxes_on_image, utils::temperature_map::TemperatureMap,
 };
 
 use super::output::OutputService;
 
+// For now, we'll need to access CONFIG through a function or pass it as a parameter
+// This is a temporary solution until we refactor to use dependency injection
+use std::sync::atomic::{AtomicBool, Ordering};
+
+lazy_static! {
+    static ref SHUTDOWN: AtomicBool = AtomicBool::new(false);
+}
+
 const CONFIDENCE_MULTIPLIER: f32 = 100.0;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DetectionResult {
     #[serde(deserialize_with = "deserialize_box")]
     pub r#box: [u32; 4],
@@ -38,6 +45,99 @@ struct DetectionApiResponse {
     inference_time: f64,
     model_type: String,
     model_version: String,
+}
+
+// Trait for abstraction to allow mocking
+pub trait DetectionServiceTrait {
+    fn do_detection(
+        &self,
+        filename: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<DetectionResult>, NorppaliveError>> + Send;
+    fn process_detection(
+        &mut self,
+        detection_result: &[DetectionResult],
+        detections_in_row: u32,
+    ) -> impl std::future::Future<Output = Option<u32>> + Send;
+}
+
+// Mock implementation for testing
+#[cfg(test)]
+pub struct MockDetectionService {
+    pub should_fail: bool,
+    pub mock_detections: Vec<DetectionResult>,
+    pub last_post_time: i64,
+    pub last_image_save_time: i64,
+    pub last_detection_time: i64,
+    pub last_heatmap_save_time: i64,
+    pub temperature_map: TemperatureMap,
+}
+
+#[cfg(test)]
+impl Default for MockDetectionService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+impl MockDetectionService {
+    pub fn new() -> Self {
+        Self {
+            should_fail: false,
+            mock_detections: vec![],
+            last_post_time: 0,
+            last_image_save_time: 0,
+            last_detection_time: 0,
+            last_heatmap_save_time: 0,
+            temperature_map: TemperatureMap::new(1280, 720),
+        }
+    }
+
+    pub fn with_mock_detections(mut self, detections: Vec<DetectionResult>) -> Self {
+        self.mock_detections = detections;
+        self
+    }
+
+    pub fn with_failure(mut self, should_fail: bool) -> Self {
+        self.should_fail = should_fail;
+        self
+    }
+}
+
+#[cfg(test)]
+impl DetectionServiceTrait for MockDetectionService {
+    #[allow(clippy::manual_async_fn)]
+    fn do_detection(
+        &self,
+        _filename: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<DetectionResult>, NorppaliveError>> + Send
+    {
+        let should_fail = self.should_fail;
+        let mock_detections = self.mock_detections.clone();
+        async move {
+            if should_fail {
+                return Err(NorppaliveError::Other("Mock detection failure".to_string()));
+            }
+            Ok(mock_detections)
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn process_detection(
+        &mut self,
+        detection_result: &[DetectionResult],
+        detections_in_row: u32,
+    ) -> impl std::future::Future<Output = Option<u32>> + Send {
+        let is_empty = detection_result.is_empty();
+        async move {
+            // Mock implementation - just return incremented count if we have detections
+            if is_empty {
+                Some(0)
+            } else {
+                Some(detections_in_row + 1)
+            }
+        }
+    }
 }
 
 fn float_to_u8<'de, D>(deserializer: D) -> Result<u8, D::Error>
@@ -96,6 +196,11 @@ impl DetectionService {
             last_heatmap_save_time: 0,
             temperature_map: TemperatureMap::new(1280, 720),
         }
+    }
+
+    pub fn has_heatmap_hotspots(&self, percentile_threshold: f64) -> bool {
+        self.temperature_map
+            .has_histogram_hotspots(percentile_threshold)
     }
 
     pub async fn do_detection(
@@ -235,7 +340,20 @@ impl DetectionService {
                     < Local::now().timestamp();
             if time_condition {
                 info!("Saving image due to save_image_confidence threshold");
+                debug!(
+                    "{} + {} < {}",
+                    self.last_image_save_time,
+                    CONFIG.output.image_save_interval * 60,
+                    Local::now().timestamp()
+                );
                 self.save_detection_image(&save_image_candidates).await;
+            } else {
+                debug!(
+                    "{} + {} < {}",
+                    self.last_image_save_time,
+                    CONFIG.output.image_save_interval * 60,
+                    Local::now().timestamp()
+                );
             }
         }
 
@@ -347,6 +465,10 @@ impl DetectionService {
 
         let image_result = draw_boxes_on_image(acceptable_detections);
         if let Ok(image) = image_result {
+            // Always save the image when we're in social media posting mode, regardless of post success
+            info!("Saving image for social media post (ignoring save interval)");
+            self.save_detection_image(acceptable_detections).await;
+
             if let Err(err) = self
                 .output_service
                 .post_to_social_media(image.clone())
@@ -354,8 +476,9 @@ impl DetectionService {
             {
                 error!("Could not post to social media: {}", err);
             } else {
-                // Save current time
+                // Save current time only if the post was successful
                 self.last_post_time = Local::now().timestamp();
+                info!("Successfully posted to social media");
             }
         } else {
             error!("Could not create image for social media");
@@ -390,6 +513,8 @@ impl DetectionService {
                 return;
             } else {
                 info!("Marked image saved to file: {}", marked_image_filename);
+                // Update timestamp after successfully saving at least the marked image
+                self.last_image_save_time = Local::now().timestamp();
             }
 
             // Copy the original image
@@ -399,7 +524,6 @@ impl DetectionService {
                 return;
             } else {
                 info!("Original image saved to file: {}", original_image_filename);
-                self.last_image_save_time = Local::now().timestamp();
             }
 
             // Send Kafka notification (non-blocking - errors won't prevent image saving)
@@ -557,6 +681,9 @@ impl DetectionService {
     }
 }
 
+// SAFETY: All fields of DetectionService are Send or only accessed from one thread.
+// unsafe impl Send for DetectionService {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,101 +691,80 @@ mod tests {
     use std::fs;
     use tempfile;
 
+    // Test constants to avoid CONFIG dependency in tests - These are not used by should_post directly anymore
+    // const TEST_MIN_DETECTION_FRAMES: u32 = 3;
+    // const TEST_POST_INTERVAL: i64 = 5; // 5 minutes for testing
+
     #[test]
     fn test_should_post_time_condition() {
-        // Assume other conditions are met for this test
-        let detections_in_row = CONFIG.detection.minimum_detection_frames; // Meet minimum frames
+        let detections_in_row = CONFIG.detection.minimum_detection_frames;
 
-        let service_new = DetectionService::new();
-        assert_eq!(service_new.last_post_time, 0);
-
-        // For this test, we assume hotspots exist. A more robust test would mock TemperatureMap.
-        let mut service_new_with_hotspots = service_new;
-        // Simulate adding a point to potentially create a hotspot state (crude simulation)
-        service_new_with_hotspots.temperature_map.set_points(vec![
-            Point {
-                x: 10.0,
-                y: 10.0,
-                value: Some(20.0),
-            },
+        // Scenario 1: Initial post (last_post_time is 0)
+        let mut service_initial = DetectionService::new(); // last_post_time is 0 by default
+                                                           // Simulate hotspots
+        service_initial.temperature_map.set_points(vec![
             Point {
                 x: 50.0,
                 y: 50.0,
                 value: Some(95.0),
             }, // High value point
-            Point {
-                x: 90.0,
-                y: 90.0,
-                value: Some(30.0),
-            },
         ]);
         assert!(
-            service_new_with_hotspots.should_post(detections_in_row),
-            "Should post when time is 0"
+            service_initial.should_post(detections_in_row),
+            "Should be able to post initially if other conditions (frames, hotspots) are met by CONFIG"
         );
 
-        let service_recent = DetectionService {
-            last_post_time: Local::now().timestamp(),
+        // Scenario 2: Recent post (not enough time passed)
+        let mut service_recent = DetectionService {
+            last_post_time: Local::now().timestamp() - (CONFIG.output.post_interval * 60 / 2), // Half of the interval
             ..Default::default()
         };
-
-        // Simulate hotspots again for the recent post scenario
-        let mut service_recent_with_hotspots = service_recent;
-        service_recent_with_hotspots
-            .temperature_map
-            .set_points(vec![
-                Point {
-                    x: 10.0,
-                    y: 10.0,
-                    value: Some(20.0),
-                },
-                Point {
-                    x: 50.0,
-                    y: 50.0,
-                    value: Some(95.0),
-                },
-                Point {
-                    x: 90.0,
-                    y: 90.0,
-                    value: Some(30.0),
-                },
-            ]);
-        assert!(
-            !service_recent_with_hotspots.should_post(detections_in_row),
-            "Should not post when time interval not met"
-        );
-
-        // Simulate enough time passing
-        let mut service_old = DetectionService {
-            last_post_time: Local::now().timestamp() - (CONFIG.output.post_interval * 60) - 1,
-            ..Default::default()
-        };
-        service_old.temperature_map.set_points(vec![
-            Point {
-                x: 10.0,
-                y: 10.0,
-                value: Some(20.0),
-            },
+        // Simulate hotspots
+        service_recent.temperature_map.set_points(vec![
             Point {
                 x: 50.0,
                 y: 50.0,
                 value: Some(95.0),
-            },
+            }, // High value point
+        ]);
+        assert!(
+            !service_recent.should_post(detections_in_row),
+            "Should not be able to post if not enough time has passed, even if other conditions met"
+        );
+
+        // Scenario 3: Old post (enough time passed)
+        let mut service_old = DetectionService {
+            last_post_time: Local::now().timestamp() - (CONFIG.output.post_interval * 60) - 1,
+            ..Default::default()
+        };
+        // Simulate hotspots
+        service_old.temperature_map.set_points(vec![
             Point {
-                x: 90.0,
-                y: 90.0,
-                value: Some(30.0),
-            },
+                x: 50.0,
+                y: 50.0,
+                value: Some(95.0),
+            }, // High value point
         ]);
         assert!(
             service_old.should_post(detections_in_row),
-            "Should post when time interval is met"
+            "Should be able to post if enough time has passed and other conditions met"
+        );
+
+        // Scenario 4: No hotspots, even if time condition met
+        let service_no_hotspots_time_met = DetectionService {
+            last_post_time: 0, // Time condition met
+            ..Default::default()
+        };
+        // No points added to temperature_map, so no hotspots
+        assert!(
+            !service_no_hotspots_time_met.should_post(detections_in_row),
+            "Should not post if no hotspots, even if time and frame conditions are met"
         );
     }
 
     #[test]
     fn test_should_post_consecutive_detections_condition() {
-        // Assume time and hotspot conditions are met
+        // Assume time and hotspot conditions are met for these tests
         let mut service = DetectionService {
             last_post_time: 0, // Time condition met
             ..Default::default()
@@ -666,66 +772,68 @@ mod tests {
         // Simulate hotspots
         service.temperature_map.set_points(vec![
             Point {
-                x: 10.0,
-                y: 10.0,
-                value: Some(20.0),
-            },
-            Point {
                 x: 50.0,
                 y: 50.0,
                 value: Some(95.0),
-            },
-            Point {
-                x: 90.0,
-                y: 90.0,
-                value: Some(30.0),
-            },
+            }, // High value point
         ]);
 
-        let min_frames = CONFIG.detection.minimum_detection_frames;
-        assert!(min_frames > 0, "Minimum frames should be positive");
+        let min_frames_from_config = CONFIG.detection.minimum_detection_frames;
+        assert!(min_frames_from_config > 0, "CONFIG.detection.minimum_detection_frames should be positive for these tests to be meaningful");
 
         // Test below minimum
-        if min_frames > 1 {
+        if min_frames_from_config > 1 {
+            // Ensure we don't go to 0 or negative if min_frames is 1
             assert!(
-                !service.should_post(min_frames - 1),
-                "Should not post when consecutive frames are less than minimum"
+                !service.should_post(min_frames_from_config - 1),
+                "Should not post if detections_in_row is less than CONFIG.detection.minimum_detection_frames"
             );
         }
 
         // Test at minimum
         assert!(
-            service.should_post(min_frames),
-            "Should post when consecutive frames meet minimum"
+            service.should_post(min_frames_from_config),
+            "Should post if detections_in_row is equal to CONFIG.detection.minimum_detection_frames (and other conditions met)"
         );
 
         // Test above minimum
         assert!(
-            service.should_post(min_frames + 1),
-            "Should post when consecutive frames exceed minimum"
+            service.should_post(min_frames_from_config + 1),
+            "Should post if detections_in_row is greater than CONFIG.detection.minimum_detection_frames (and other conditions met)"
+        );
+
+        // Scenario: No hotspots, even if frame condition met
+        let service_no_hotspots_frames_met = DetectionService {
+            last_post_time: 0, // Time condition met
+            ..Default::default()
+        };
+        // No points added to temperature_map, so no hotspots
+        assert!(
+            !service_no_hotspots_frames_met.should_post(min_frames_from_config),
+            "Should not post if no hotspots, even if time and frame conditions are met"
         );
     }
 
     #[test]
     fn test_should_post_hotspot_condition() {
-        // Assume time and consecutive detections conditions are met
-        let detections_in_row = CONFIG.detection.minimum_detection_frames;
-        let service_no_hotspots = DetectionService {
-            last_post_time: 0, // Time condition met
-            ..Default::default()
-        };
+        // Use mock service for testing to avoid Kafka spam
+        let mut mock_service_no_hotspots = MockDetectionService::new();
+        mock_service_no_hotspots.last_post_time = 0; // Time condition met
+
         // No points added, so no hotspots
+        // For mock service, we'll test the logic independently
         assert!(
-            !service_no_hotspots.should_post(detections_in_row),
-            "Should not post without heatmap hotspots"
+            !mock_service_no_hotspots
+                .temperature_map
+                .has_histogram_hotspots(90.0),
+            "Should not have hotspots in empty temperature map"
         );
 
-        let mut service_with_hotspots = DetectionService {
-            last_post_time: 0, // Time condition met
-            ..Default::default()
-        };
+        let mut mock_service_with_hotspots = MockDetectionService::new();
+        mock_service_with_hotspots.last_post_time = 0; // Time condition met
+
         // Add a point likely to be above 90th percentile
-        service_with_hotspots.temperature_map.set_points(vec![
+        mock_service_with_hotspots.temperature_map.set_points(vec![
             Point {
                 x: 10.0,
                 y: 10.0,
@@ -742,16 +850,14 @@ mod tests {
                 value: Some(30.0),
             },
         ]);
-        assert!(
-            service_with_hotspots.should_post(detections_in_row),
-            "Should post with heatmap hotspots"
-        );
-    }
 
-    #[test]
-    fn test_minimum_detection_frames() {
-        let min_frames = CONFIG.detection.minimum_detection_frames;
-        assert!(min_frames > 0); // Sanity check that config has a positive value
+        // Check that hotspots exist
+        assert!(
+            mock_service_with_hotspots
+                .temperature_map
+                .has_histogram_hotspots(90.0),
+            "Should have hotspots with high-value points"
+        );
     }
 
     #[test]
@@ -856,5 +962,44 @@ mod tests {
             original_found,
             "Original image should be saved when detection is above save_image_confidence"
         );
+    }
+
+    #[tokio::test]
+    async fn test_mock_detection_service() {
+        let mock_service = MockDetectionService::new();
+
+        // Test that mock service returns empty detections by default
+        let result = mock_service.do_detection("fake_image.jpg").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_detection_service_with_detections() {
+        let test_detection = DetectionResult {
+            r#box: [10, 10, 50, 50],
+            cls: 0,
+            cls_name: "seal".to_string(),
+            conf: 85,
+        };
+
+        let mock_service =
+            MockDetectionService::new().with_mock_detections(vec![test_detection.clone()]);
+
+        let result = mock_service.do_detection("fake_image.jpg").await;
+        assert!(result.is_ok());
+
+        let detections = result.unwrap();
+        assert_eq!(detections.len(), 1);
+        assert_eq!(detections[0].cls_name, "seal");
+        assert_eq!(detections[0].conf, 85);
+    }
+
+    #[tokio::test]
+    async fn test_mock_detection_service_failure() {
+        let mock_service = MockDetectionService::new().with_failure(true);
+
+        let result = mock_service.do_detection("fake_image.jpg").await;
+        assert!(result.is_err());
     }
 }

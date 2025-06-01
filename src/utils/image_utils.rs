@@ -3,7 +3,7 @@ use image::DynamicImage;
 use image::ImageReader;
 use miette::Result;
 
-use crate::{error::NorppaliveError, CONFIG};
+use crate::{config::CONFIG, error::NorppaliveError};
 
 use super::detection_utils::DetectionResult;
 
@@ -70,6 +70,35 @@ pub fn draw_boxes_on_image(
                 &font,
                 label.as_str(),
             );
+        } else {
+            // Draw text below the bounding box when detection is too high
+            let text_y = box_y + box_height;
+
+            // Ensure we don't draw beyond image boundaries
+            if text_y + text_height <= image.height() {
+                imageproc::drawing::draw_filled_rect_mut(
+                    &mut image,
+                    imageproc::rect::Rect::at(
+                        (if box_width > text_width {
+                            box_x + box_width - text_width
+                        } else {
+                            box_x
+                        }) as i32,
+                        text_y as i32,
+                    )
+                    .of_size(text_width, text_height),
+                    image::Rgba(CONFIG.output.line_color),
+                );
+                imageproc::drawing::draw_text_mut(
+                    &mut image,
+                    image::Rgba(CONFIG.output.text_color),
+                    text_x as i32,
+                    (text_y + padding_y) as i32,
+                    scale,
+                    &font,
+                    label.as_str(),
+                );
+            }
         }
     }
 

@@ -15,6 +15,7 @@ pub trait SocialMediaService {
 }
 
 #[enum_dispatch]
+#[derive(Clone)]
 pub enum ServiceType {
     TwitterService,
     MastodonService,

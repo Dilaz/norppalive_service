@@ -1,4 +1,17 @@
+use lazy_static::lazy_static;
 use serde::Deserialize;
+
+lazy_static! {
+    pub static ref CONFIG: Config = {
+        let config_path =
+            std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
+
+        let config_content = std::fs::read_to_string(&config_path)
+            .unwrap_or_else(|_| panic!("Failed to read config file: {}", config_path));
+        toml::from_str(&config_content)
+            .unwrap_or_else(|_| panic!("Failed to parse config file: {}", config_path))
+    };
+}
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -16,6 +29,8 @@ pub struct Config {
 pub struct Stream {
     pub stream_url: String,
     pub only_keyframes: bool,
+    pub max_frames: Option<u64>, // Optional limit on number of frames to process
+    pub frame_processing_delay_ms: u64, // Minimum interval between frame processing in milliseconds
 }
 
 #[derive(Deserialize, Debug)]
@@ -90,4 +105,5 @@ pub struct Kafka {
     pub broker: String,
     pub topic: String,
     pub detection_topic: String,
+    pub detection_message: String,
 }

@@ -3,6 +3,8 @@ image_filename = "frames/frame.png"
 [stream]
 stream_url = 'https://www.youtube.com/watch?v=vMruQGW0LqI'
 only_keyframes = true
+frame_processing_delay_ms = 100  # Minimum interval between frame processing in milliseconds
+# max_frames = 1000  # Optional: Maximum number of frames to process before stopping
 
 [detection]
 minimum_detection_percentage = 75
@@ -36,6 +38,7 @@ services = [
     # "Twitter",
     # "Mastodon",
     # "Bluesky"
+    # "Kafka"
 ]
 
 [twitter]
@@ -58,3 +61,4 @@ password = ""
 broker = "localhost:19092"
 topic = "detection"
 detection_topic = "norppalive-detections"
+detection_message = "Norppa dyykkaa!" # Example static message for detection events

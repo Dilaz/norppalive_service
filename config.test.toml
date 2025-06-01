@@ -1,0 +1,58 @@
+image_filename = "test_frame.jpg"
+
+[stream]
+stream_url = "rtsp://test.example.com/stream"
+only_keyframes = true
+max_frames = 10
+frame_processing_delay_ms = 100
+
+[detection]
+minimum_detection_percentage = 50
+minimum_detection_frames = 3
+api_url = "http://localhost:8080/detect"
+minimum_x = 0
+maximum_x = 1920
+minimum_y = 0
+maximum_y = 1080
+heatmap_resolution = 100
+heatmap_decay_rate = 0.95
+heatmap_threshold = 0.5
+heatmap_save_interval = 60
+save_image_confidence = 70
+
+[[detection.ignore_points]]
+x = 100
+y = 100
+
+[output]
+post_interval = 300
+image_save_interval = 60
+line_color = [255, 0, 0, 255]
+text_color = [255, 255, 255, 255]
+line_thickness = 2
+output_file_folder = "test_output"
+replace_hashtags = false
+messages = ["Test detection message"]
+services = ["Kafka"]
+
+[twitter]
+token = "test_token"
+token_secret = "test_token_secret"
+consumer_key = "test_consumer_key"
+consumer_secret = "test_consumer_secret"
+
+[mastodon]
+host = "test.mastodon.social"
+token = "test_mastodon_token"
+
+[bluesky]
+host = "bsky.social"
+login = "test@example.com"
+handle = "test.bsky.social"
+password = "test_password"
+
+[kafka]
+broker = "localhost:9092"
+topic = "test_topic"
+detection_topic = "test_detection_topic"
+detection_message = "Test detection message" 
