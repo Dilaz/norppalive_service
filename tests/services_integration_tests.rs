@@ -1,5 +1,4 @@
 use std::fs;
-use tempfile;
 
 use norppalive_service::services::SocialMediaService;
 
@@ -17,7 +16,7 @@ fn create_test_image_file() -> Result<tempfile::NamedTempFile, std::io::Error> {
 #[tokio::test]
 async fn test_mock_service_manager_integration() {
     // Create a shared service manager for all services
-    let manager = MockServiceManager::new();
+    let manager = MockServiceManager::default();
 
     // Create all service instances from the manager
     let twitter = manager.create_twitter_service();
@@ -61,7 +60,7 @@ async fn test_mock_service_manager_integration() {
 
 #[tokio::test]
 async fn test_mock_service_failure_scenarios() {
-    let manager = MockServiceManager::new();
+    let manager = MockServiceManager::default();
 
     // Set up failure for all services
     manager.set_global_failure(true, Some("Network error simulation".to_string()));
@@ -93,8 +92,8 @@ async fn test_mock_service_failure_scenarios() {
 #[tokio::test]
 async fn test_individual_service_configurations() {
     // Test different services with different configurations
-    let twitter = MockTwitterService::new();
-    let mastodon = MockMastodonService::new();
+    let twitter = MockTwitterService::default();
+    let mastodon = MockMastodonService::default();
 
     // Configure Twitter to fail, Mastodon to succeed
     twitter.set_failure(true, Some("Twitter API rate limit".to_string()));
@@ -117,7 +116,7 @@ async fn test_individual_service_configurations() {
 async fn test_concurrent_mock_service_access() {
     use tokio::task;
 
-    let manager = MockServiceManager::new();
+    let manager = MockServiceManager::default();
     let temp_file = create_test_image_file().unwrap();
     let image_path = temp_file.path().to_string_lossy().to_string();
 
@@ -151,7 +150,7 @@ async fn test_concurrent_mock_service_access() {
 
 #[tokio::test]
 async fn test_service_name_verification() {
-    let manager = MockServiceManager::new();
+    let manager = MockServiceManager::default();
 
     let twitter = manager.create_twitter_service();
     let mastodon = manager.create_mastodon_service();
@@ -168,7 +167,7 @@ async fn test_service_name_verification() {
 #[tokio::test]
 async fn test_realistic_detection_workflow() {
     // Simulate a realistic detection workflow
-    let manager = MockServiceManager::new();
+    let manager = MockServiceManager::default();
 
     // Create services as individual variables with proper types
     let twitter_service = manager.create_twitter_service();

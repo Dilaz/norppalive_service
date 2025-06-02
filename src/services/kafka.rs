@@ -58,7 +58,7 @@ impl SocialMediaService for KafkaService {
             .await
             .map_err(|(err, _)| {
                 info!("Kafka error details: {}", err);
-                err
+                NorppaliveError::KafkaError(err)
             })?;
 
         debug!("Message sent to Kafka: {:?}", res);
@@ -217,10 +217,7 @@ impl DetectionKafkaServiceTrait for DetectionKafkaService {
             .await
             .map_err(|(err, _)| {
                 error!("Detection Kafka error details: {}", err);
-                NorppaliveError::Other(format!(
-                    "Failed to send detection notification to Kafka: {}",
-                    err
-                ))
+                NorppaliveError::KafkaError(err)
             })?;
 
         debug!("Detection notification sent to Kafka: {:?}", res);

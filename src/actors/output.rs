@@ -6,15 +6,22 @@ use crate::messages::{
     GetServiceStatus, PostToSocialMedia, SaveDetectionImage, SaveHeatmapVisualization,
     ServiceStatus,
 };
+use crate::utils::image_utils::draw_boxes_on_provided_image;
 use crate::utils::output::OutputService;
 
 #[cfg(test)]
 use crate::utils::output::{MockOutputService, OutputServiceTrait};
 
 /// OutputActor coordinates output operations (posting, saving)
-#[derive(Default)]
 pub struct OutputActor {
     output_service: OutputService,
+    use_mocks: bool,
+}
+
+impl Default for OutputActor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Actor for OutputActor {
@@ -31,14 +38,21 @@ impl Actor for OutputActor {
 
 impl OutputActor {
     pub fn new() -> Self {
-        Self::default()
+        // Check if we're in a test environment
+        let use_mocks = std::env::var("CARGO_PKG_NAME").is_ok()
+            && (cfg!(test) || std::env::var("NORPPALIVE_USE_MOCKS").is_ok());
+
+        Self {
+            output_service: OutputService::default(),
+            use_mocks,
+        }
     }
 
     #[cfg(test)]
     pub fn new_with_mocks() -> Self {
-        // In tests, we don't want to use real services
         Self {
-            output_service: OutputService::default(), // We'll override the methods in tests
+            output_service: OutputService::default(),
+            use_mocks: true,
         }
     }
 }
@@ -53,20 +67,26 @@ impl Handler<PostToSocialMedia> for OutputActor {
         );
 
         let image = msg.image;
+        let use_mocks = self.use_mocks;
 
-        #[cfg(test)]
-        {
+        if use_mocks {
             // In tests, use mock service to avoid real posts
             Box::pin(
                 async move {
-                    let mock_service = MockOutputService::new();
-                    mock_service.post_to_social_media(image).await
+                    #[cfg(test)]
+                    {
+                        let mock_service = MockOutputService::new();
+                        mock_service.post_to_social_media(image).await
+                    }
+                    #[cfg(not(test))]
+                    {
+                        info!("Mock mode enabled - skipping social media posting");
+                        Ok(())
+                    }
                 }
                 .into_actor(self),
             )
-        }
-        #[cfg(not(test))]
-        {
+        } else {
             // In production, use the stored service
             let output_service = self.output_service.clone();
             Box::pin(
@@ -87,8 +107,26 @@ impl Handler<SaveDetectionImage> for OutputActor {
 
         Box::pin(
             async move {
-                // TODO: Implement image saving logic
-                // For now, just return success
+                use crate::config::CONFIG;
+                use chrono::Utc;
+                use std::fs;
+
+                // Create output directory if it doesn't exist
+                fs::create_dir_all(&CONFIG.output.output_file_folder)?;
+
+                // Draw bounding boxes on the image using the existing utility function
+                let image_with_boxes = draw_boxes_on_provided_image(msg.image, &msg.detections)?;
+
+                // Save the image with timestamp
+                let timestamp = Utc::now().timestamp();
+                let image_path = format!(
+                    "{}/detection-{}.jpg",
+                    CONFIG.output.output_file_folder, timestamp
+                );
+
+                image_with_boxes.save(&image_path)?;
+
+                info!("Detection image saved to: {}", image_path);
                 Ok(())
             }
             .into_actor(self),
@@ -99,13 +137,38 @@ impl Handler<SaveDetectionImage> for OutputActor {
 impl Handler<SaveHeatmapVisualization> for OutputActor {
     type Result = ResponseActFuture<Self, Result<(), NorppaliveError>>;
 
-    fn handle(&mut self, _msg: SaveHeatmapVisualization, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SaveHeatmapVisualization, _ctx: &mut Self::Context) -> Self::Result {
         info!("Saving heatmap visualization");
 
         Box::pin(
             async move {
-                // TODO: Implement heatmap saving logic
-                // For now, just return success
+                use crate::config::CONFIG;
+                use chrono::Utc;
+                use image::RgbImage;
+                use std::fs;
+
+                // Create output directory if it doesn't exist
+                fs::create_dir_all(&CONFIG.output.output_file_folder)?;
+
+                // Create a base image for the heatmap
+                let mut base_image = image::DynamicImage::ImageRgb8(RgbImage::new(
+                    msg.temp_map.width,
+                    msg.temp_map.height,
+                ));
+
+                // Draw the temperature map on the base image
+                msg.temp_map.draw(&mut base_image)?;
+
+                // Save the heatmap image with timestamp
+                let timestamp = Utc::now().timestamp();
+                let heatmap_path = format!(
+                    "{}/heatmap-{}.jpg",
+                    CONFIG.output.output_file_folder, timestamp
+                );
+
+                base_image.save(&heatmap_path)?;
+
+                info!("Heatmap visualization saved to: {}", heatmap_path);
                 Ok(())
             }
             .into_actor(self),

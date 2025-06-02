@@ -174,8 +174,7 @@ src/
 ├── message_bus/                # Communication abstraction layer
 │   ├── mod.rs                  # Message bus exports
 │   ├── trait_def.rs            # MessageBus trait definition
-│   ├── actor_bus.rs            # Internal actor communication
-│   └── http_bus.rs             # Future external service support
+│   └── actor_bus.rs            # Internal actor communication
 ├── services/                   # Legacy service implementations
 │   ├── mod.rs                  # Service exports and traits
 │   ├── generic.rs              # SocialMediaService trait

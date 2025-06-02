@@ -41,7 +41,7 @@ pub struct ServicePost {
 #[rtype(result = "Result<ServiceStatus, crate::error::NorppaliveError>")]
 pub struct GetServiceStatus;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServiceStatus {
     pub name: String,
     pub healthy: bool,
