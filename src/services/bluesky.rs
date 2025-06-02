@@ -34,14 +34,29 @@ pub struct BlueskyService {
 impl SocialMediaService for BlueskyService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         // Check if we need to login
-        {
-            let is_logged_in = self.is_logged_in.lock().await;
-            if !*is_logged_in {
-                drop(is_logged_in); // Release the lock before calling login
-                self.login().await?;
-                info!("Logged in to Bluesky");
+        let mut is_logged_in_guard = self.is_logged_in.lock().await;
+        if !*is_logged_in_guard {
+            debug!("Not logged in. Attempting to login to Bluesky.");
+            let agent_guard = self.agent.lock().await;
+            match agent_guard
+                .login(&CONFIG.bluesky.login, &CONFIG.bluesky.password)
+                .await
+            {
+                Ok(_session) => {
+                    *is_logged_in_guard = true;
+                    // agent_guard is dropped here implicitly
+                    info!("Logged in to Bluesky");
+                }
+                Err(e) => {
+                    // agent_guard is dropped here implicitly
+                    tracing::error!("Bluesky login failed: {:?}", e); // Use tracing::error
+                    return Err(NorppaliveError::AtriumCreateSessionError(e));
+                }
             }
+            // If login was successful, agent_guard was dropped, *is_logged_in_guard is true.
+            // If login failed, agent_guard was dropped, error was returned, and is_logged_in_guard remains false until it's dropped.
         }
+        // is_logged_in_guard is dropped here, releasing the lock.
 
         let blob_ref = self.upload_image(image_path).await?;
 
@@ -160,20 +175,6 @@ impl Default for BlueskyService {
 }
 
 impl BlueskyService {
-    async fn login(&self) -> Result<(), NorppaliveError> {
-        let agent = self.agent.lock().await;
-        let _login = agent
-            .login(&CONFIG.bluesky.login, &CONFIG.bluesky.password)
-            .await?;
-
-        drop(agent); // Release the lock before updating is_logged_in
-
-        let mut is_logged_in = self.is_logged_in.lock().await;
-        *is_logged_in = true;
-
-        Ok(())
-    }
-
     async fn upload_image(&self, image_path: &str) -> Result<UploadResponse, NorppaliveError> {
         info!("Uploading image: {}", image_path);
         let image_data = std::fs::read(image_path)?;

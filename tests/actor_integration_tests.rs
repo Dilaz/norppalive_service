@@ -1,6 +1,5 @@
 use actix::prelude::*;
 use std::io::Write;
-use tempfile;
 
 use norppalive_service::messages::GetServiceStatus;
 
@@ -8,6 +7,7 @@ use norppalive_service::messages::GetServiceStatus;
 mod mocks;
 use mocks::{MockBlueskyActor, MockKafkaActor, MockMastodonActor, MockTwitterActor};
 
+#[allow(dead_code)]
 fn create_test_image_file() -> Result<tempfile::NamedTempFile, std::io::Error> {
     let mut file = tempfile::NamedTempFile::new()?;
     file.write_all(b"fake image data for testing")?;

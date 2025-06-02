@@ -4,6 +4,11 @@ use norppalive_service::actors::*;
 use norppalive_service::messages::*;
 use norppalive_service::utils::detection_utils::DetectionResult;
 
+// Ensure all tests use mocks to prevent real network requests
+fn setup_test_environment() {
+    std::env::set_var("NORPPALIVE_USE_MOCKS", "1");
+}
+
 // Test helper functions
 fn create_test_image() -> DynamicImage {
     image::DynamicImage::new_rgb8(100, 100)
@@ -20,6 +25,8 @@ fn create_test_detection() -> DetectionResult {
 
 #[actix::test]
 async fn test_supervisor_and_actor_communication() {
+    setup_test_environment();
+
     let supervisor = SupervisorActor::new().start();
 
     // Test health check
@@ -40,7 +47,10 @@ async fn test_supervisor_and_actor_communication() {
 
 #[actix::test]
 async fn test_detection_to_output_flow() {
+    setup_test_environment();
+
     let _detection_actor = DetectionActor::new().start();
+    // OutputActor will now use mocks due to environment variable
     let output_actor = OutputActor::new().start();
 
     let test_image = create_test_image();
@@ -56,7 +66,7 @@ async fn test_detection_to_output_flow() {
         .unwrap();
     assert!(save_result.is_ok());
 
-    // Test posting to social media (might fail in production mode without proper credentials)
+    // Test posting to social media (will use mocks due to environment variable)
     let post_result = output_actor
         .send(PostToSocialMedia {
             detections: vec![test_detection],
@@ -65,13 +75,14 @@ async fn test_detection_to_output_flow() {
         })
         .await
         .unwrap();
-    // Don't assert success since this might fail in production mode
-    // Just ensure the actor responds
-    assert!(post_result.is_ok() || post_result.is_err());
+    // With mocks enabled, this should succeed
+    assert!(post_result.is_ok());
 }
 
 #[actix::test]
 async fn test_stream_to_detection_flow() {
+    setup_test_environment();
+
     // Start actors
     let stream_actor = StreamActor::new().start();
     let detection_actor = DetectionActor::new().start();
@@ -114,17 +125,14 @@ async fn test_stream_to_detection_flow() {
 
 #[actix::test]
 async fn test_full_actor_system_startup() {
+    setup_test_environment();
+
     // Start all core actors
     let supervisor = SupervisorActor::new().start();
     let stream_actor = StreamActor::new().start();
     let detection_actor = DetectionActor::new().start();
+    // OutputActor will use mocks due to environment variable
     let output_actor = OutputActor::new().start();
-
-    // Start service actors
-    let twitter_actor = services::TwitterActor::new().start();
-    let mastodon_actor = services::MastodonActor::new().start();
-    let bluesky_actor = services::BlueskyActor::new().start();
-    let kafka_actor = services::KafkaActor::new().start();
 
     // Test that all actors are responsive
     let health = supervisor.send(GetSystemHealth).await.unwrap().unwrap();
@@ -140,23 +148,6 @@ async fn test_full_actor_system_startup() {
     let output_status = output_actor.send(GetServiceStatus).await.unwrap().unwrap();
     assert!(output_status.healthy);
 
-    // Test service actor statuses
-    let twitter_status = twitter_actor.send(GetServiceStatus).await.unwrap().unwrap();
-    assert_eq!(twitter_status.name, "Twitter");
-
-    let mastodon_status = mastodon_actor
-        .send(GetServiceStatus)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(mastodon_status.name, "Mastodon");
-
-    let bluesky_status = bluesky_actor.send(GetServiceStatus).await.unwrap().unwrap();
-    assert_eq!(bluesky_status.name, "Bluesky");
-
-    let kafka_status = kafka_actor.send(GetServiceStatus).await.unwrap().unwrap();
-    assert_eq!(kafka_status.name, "Kafka");
-
     // Test stream operations (might fail without proper stream setup, which is expected)
     let _start_result = stream_actor
         .send(StartStream {
@@ -171,10 +162,11 @@ async fn test_full_actor_system_startup() {
 
 #[actix::test]
 async fn test_concurrent_actor_operations() {
-    // Start actors
+    setup_test_environment();
+
+    // Start actors (OutputActor will use mocks due to environment variable)
     let detection_actor = DetectionActor::new().start();
     let output_actor = OutputActor::new().start();
-    let twitter_actor = services::TwitterActor::new().start();
 
     let test_image = create_test_image();
     let test_detection = create_test_detection();
@@ -186,31 +178,27 @@ async fn test_concurrent_actor_operations() {
         image: test_image.clone(),
         message: "Concurrent test".to_string(),
     });
-    let twitter_future = twitter_actor.send(GetServiceStatus);
     let output_save_future = output_actor.send(SaveDetectionImage {
         detections: vec![test_detection],
         image: test_image,
     });
 
     // Wait for all operations to complete
-    let (detection_res, post_res, twitter_res, save_res) = futures::future::join4(
-        detection_future,
-        output_post_future,
-        twitter_future,
-        output_save_future,
-    )
-    .await;
+    let (detection_res, post_res, save_res) =
+        futures::future::join3(detection_future, output_post_future, output_save_future).await;
 
-    // All operations should complete successfully
+    // All operations should complete successfully with mocks enabled
     assert!(detection_res.is_ok());
-    // Don't assert post_res success since it might fail in production mode
-    assert!(post_res.is_ok() || post_res.is_err());
-    assert!(twitter_res.is_ok());
+    assert!(post_res.is_ok());
+    assert!(post_res.unwrap().is_ok()); // With mocks, posting should succeed
     assert!(save_res.is_ok());
+    assert!(save_res.unwrap().is_ok()); // Saving should succeed
 }
 
 #[actix::test]
 async fn test_actor_error_handling() {
+    setup_test_environment();
+
     let detection_actor = DetectionActor::new().start();
     let supervisor = SupervisorActor::new().start();
     let mock_stream_actor = StreamActor::new().start();
@@ -235,7 +223,10 @@ async fn test_actor_error_handling() {
 
 #[actix::test]
 async fn test_message_bus_abstraction_concept() {
+    setup_test_environment();
+
     // This test demonstrates how the message bus abstraction would work
+    // OutputActor will use mocks due to environment variable
     let output_actor = OutputActor::new().start();
     let detection_actor = DetectionActor::new().start();
 
@@ -262,6 +253,6 @@ async fn test_message_bus_abstraction_concept() {
         })
         .await
         .unwrap();
-    // Don't assert success since this might fail in production mode
-    assert!(post_result.is_ok() || post_result.is_err());
+    // With mocks enabled, this should succeed
+    assert!(post_result.is_ok());
 }
