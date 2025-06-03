@@ -3,11 +3,7 @@ use image::DynamicImage;
 use norppalive_service::actors::*;
 use norppalive_service::messages::*;
 use norppalive_service::utils::detection_utils::DetectionResult;
-
-// Ensure all tests use mocks to prevent real network requests
-fn setup_test_environment() {
-    std::env::set_var("NORPPALIVE_USE_MOCKS", "1");
-}
+use norppalive_service::utils::output::MockOutputService;
 
 // Test helper functions
 fn create_test_image() -> DynamicImage {
@@ -25,8 +21,6 @@ fn create_test_detection() -> DetectionResult {
 
 #[actix::test]
 async fn test_supervisor_and_actor_communication() {
-    setup_test_environment();
-
     let supervisor = SupervisorActor::new().start();
 
     // Test health check
@@ -47,11 +41,8 @@ async fn test_supervisor_and_actor_communication() {
 
 #[actix::test]
 async fn test_detection_to_output_flow() {
-    setup_test_environment();
-
     let _detection_actor = DetectionActor::new().start();
-    // OutputActor will now use mocks due to environment variable
-    let output_actor = OutputActor::new().start();
+    let output_actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
     let test_image = create_test_image();
     let test_detection = create_test_detection();
@@ -81,8 +72,6 @@ async fn test_detection_to_output_flow() {
 
 #[actix::test]
 async fn test_stream_to_detection_flow() {
-    setup_test_environment();
-
     // Start actors
     let stream_actor = StreamActor::new().start();
     let detection_actor = DetectionActor::new().start();
@@ -125,14 +114,11 @@ async fn test_stream_to_detection_flow() {
 
 #[actix::test]
 async fn test_full_actor_system_startup() {
-    setup_test_environment();
-
     // Start all core actors
     let supervisor = SupervisorActor::new().start();
     let stream_actor = StreamActor::new().start();
     let detection_actor = DetectionActor::new().start();
-    // OutputActor will use mocks due to environment variable
-    let output_actor = OutputActor::new().start();
+    let output_actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
     // Test that all actors are responsive
     let health = supervisor.send(GetSystemHealth).await.unwrap().unwrap();
@@ -162,11 +148,9 @@ async fn test_full_actor_system_startup() {
 
 #[actix::test]
 async fn test_concurrent_actor_operations() {
-    setup_test_environment();
-
-    // Start actors (OutputActor will use mocks due to environment variable)
+    // Start actors
     let detection_actor = DetectionActor::new().start();
-    let output_actor = OutputActor::new().start();
+    let output_actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
     let test_image = create_test_image();
     let test_detection = create_test_detection();
@@ -197,8 +181,6 @@ async fn test_concurrent_actor_operations() {
 
 #[actix::test]
 async fn test_actor_error_handling() {
-    setup_test_environment();
-
     let detection_actor = DetectionActor::new().start();
     let supervisor = SupervisorActor::new().start();
     let mock_stream_actor = StreamActor::new().start();
@@ -223,11 +205,8 @@ async fn test_actor_error_handling() {
 
 #[actix::test]
 async fn test_message_bus_abstraction_concept() {
-    setup_test_environment();
-
     // This test demonstrates how the message bus abstraction would work
-    // OutputActor will use mocks due to environment variable
-    let output_actor = OutputActor::new().start();
+    let output_actor = OutputActor::new(Box::new(MockOutputService::new())).start();
     let detection_actor = DetectionActor::new().start();
 
     let test_image = create_test_image();

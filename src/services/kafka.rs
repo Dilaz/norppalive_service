@@ -2,6 +2,7 @@ use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 
 use super::SocialMediaService;
+use async_trait::async_trait;
 use base64::Engine;
 use chrono::Utc;
 use rdkafka::producer::{FutureProducer, FutureRecord};
@@ -36,6 +37,7 @@ impl Default for KafkaService {
     }
 }
 
+#[async_trait]
 impl SocialMediaService for KafkaService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         let image_data = std::fs::read(image_path)?;

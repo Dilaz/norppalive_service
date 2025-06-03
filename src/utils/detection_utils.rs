@@ -460,15 +460,10 @@ impl DetectionService {
             return;
         }
 
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
         let output_folder_path = std::path::PathBuf::from(&CONFIG.output.output_file_folder);
-        let filename = format!(
-            "{}",
-            output_folder_path
-                .join(format!("heatmap_visualization_{}.jpg", timestamp))
-                .display()
-        );
-        if let Err(e) = heatmap_image.save(&filename) {
+        let filename = format!("{}", output_folder_path.join("heatmap.jpg").display());
+        let heatmap_image_rgb = heatmap_image.to_rgb8();
+        if let Err(e) = heatmap_image_rgb.save(&filename) {
             error!(
                 "Failed to save heatmap visualization to {}: {}",
                 filename, e

@@ -1,4 +1,6 @@
 use lazy_static::lazy_static;
+use rand::seq::{IndexedRandom, SliceRandom};
+use rand::{rng, thread_rng};
 use serde::Deserialize;
 
 lazy_static! {
@@ -76,6 +78,15 @@ pub struct Output {
     // pub kvstore_url: String,
     // pub kvstore_token: String,
     pub services: Vec<Service>,
+}
+
+impl Output {
+    pub fn get_random_message(&self) -> Option<&String> {
+        if self.messages.is_empty() {
+            return None;
+        }
+        self.messages.choose(&mut rng())
+    }
 }
 
 #[derive(Deserialize, Debug)]

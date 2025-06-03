@@ -18,6 +18,7 @@ use crate::messages::supervisor::SystemShutdown;
 use actors::{DetectionActor, OutputActor, StreamActor, SupervisorActor};
 use config::Config;
 use messages::{GetSystemHealth, StartStream};
+use utils::output::OutputService;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None, name = "Norppalive Service", author = "Risto \"Dilaz\" Viitanen")]
@@ -53,7 +54,7 @@ fn main() -> Result<()> {
         let detection_actor = DetectionActor::new().start();
         let stream_actor =
             StreamActor::with_actors(detection_actor.clone(), supervisor.clone()).start();
-        let _output_actor = OutputActor::new().start();
+        let _output_actor = OutputActor::new(Box::new(OutputService::default())).start();
 
         info!("Actor system started");
 

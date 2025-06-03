@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::path::PathBuf;
 use tracing::{error, info};
 use twitter_api_v1::{
@@ -93,6 +94,7 @@ impl std::fmt::Display for TwitterService {
     }
 }
 
+#[async_trait]
 impl SocialMediaService for TwitterService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         info!("Posting to Twitter");
