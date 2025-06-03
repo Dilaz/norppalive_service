@@ -5,36 +5,21 @@ use tracing::{error, info, warn};
 
 use crate::error::NorppaliveError;
 use crate::messages::{GetServiceStatus, ServicePost, ServicePostResult, ServiceStatus};
-use crate::services::{SocialMediaService, TwitterService};
+use crate::services::{ServiceType, SocialMediaService};
 
 /// TwitterActor handles posting to Twitter
 pub struct TwitterActor {
+    service: ServiceType,
     service_status: ServiceStatus,
     last_post_time: Option<Instant>,
     rate_limit_reset: Option<Instant>,
-}
-
-impl Default for TwitterActor {
-    fn default() -> Self {
-        Self {
-            service_status: ServiceStatus {
-                name: "Twitter".to_string(),
-                healthy: true,
-                last_post_time: None,
-                error_count: 0,
-                rate_limited: false,
-            },
-            last_post_time: None,
-            rate_limit_reset: None,
-        }
-    }
 }
 
 impl Actor for TwitterActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!("TwitterActor started");
+        info!("TwitterActor ({}) started", self.service.name());
 
         // Schedule periodic health checks
         ctx.run_interval(Duration::from_secs(60), |actor, _ctx| {
@@ -43,13 +28,23 @@ impl Actor for TwitterActor {
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        info!("TwitterActor stopped");
+        info!("TwitterActor ({}) stopped", self.service.name());
     }
 }
 
 impl TwitterActor {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(service: ServiceType) -> Self {
+        let service_name = service.name().to_string();
+        Self {
+            service,
+            service_status: ServiceStatus {
+                name: service_name,
+                healthy: true,
+                ..Default::default()
+            },
+            last_post_time: None,
+            rate_limit_reset: None,
+        }
     }
 
     /// Check if we're still rate limited
@@ -58,7 +53,10 @@ impl TwitterActor {
             if Instant::now() > reset_time {
                 self.rate_limit_reset = None;
                 self.service_status.rate_limited = false;
-                info!("Twitter rate limit has been reset");
+                info!(
+                    "Twitter rate limit ({}) has been reset",
+                    self.service.name()
+                );
             }
         }
     }
@@ -104,20 +102,23 @@ impl Handler<ServicePost> for TwitterActor {
     type Result = ResponseActFuture<Self, Result<ServicePostResult, NorppaliveError>>;
 
     fn handle(&mut self, msg: ServicePost, _ctx: &mut Self::Context) -> Self::Result {
-        info!("Received Twitter post request: {}", msg.message);
+        info!(
+            "Received post request for {}: {}",
+            self.service.name(),
+            msg.message
+        );
 
-        // Check rate limiting first, regardless of mock or real service
         if !self.can_post() {
             let error_msg = if self.service_status.rate_limited {
-                "Twitter service is rate limited".to_string()
+                format!("{} service is rate limited", self.service.name())
             } else {
-                "Too soon since last Twitter post".to_string()
+                format!("Too soon since last post to {}", self.service.name())
             };
 
             warn!("{}", error_msg);
             return Box::pin(actix::fut::ready(Ok(ServicePostResult {
                 success: false,
-                service_name: "Twitter".to_string(),
+                service_name: self.service.name().to_string(),
                 error_message: Some(error_msg),
                 posted_at: Utc::now().timestamp(),
             })));
@@ -125,27 +126,26 @@ impl Handler<ServicePost> for TwitterActor {
 
         let message = msg.message.clone();
         let image_path = msg.image_path.clone();
+        let service_instance = self.service.clone();
 
         Box::pin(
             async move {
-                // Use real Twitter service in production
-                let twitter_service = TwitterService;
-                match twitter_service.post(&message, &image_path).await {
+                match service_instance.post(&message, &image_path).await {
                     Ok(_) => {
-                        info!("Successfully posted to Twitter");
+                        info!("Successfully posted to {}", service_instance.name());
                         Ok(ServicePostResult {
                             success: true,
-                            service_name: "Twitter".to_string(),
+                            service_name: service_instance.name().to_string(),
                             error_message: None,
                             posted_at: Utc::now().timestamp(),
                         })
                     }
                     Err(err) => {
-                        error!("Failed to post to Twitter: {}", err);
+                        error!("Failed to post to {}: {}", service_instance.name(), err);
                         Ok(ServicePostResult {
                             success: false,
-                            service_name: "Twitter".to_string(),
-                            error_message: Some(err.to_string()),
+                            service_name: service_instance.name().to_string(),
+                            error_message: Some(err.clone_for_error_reporting().to_string()),
                             posted_at: Utc::now().timestamp(),
                         })
                     }
@@ -153,17 +153,16 @@ impl Handler<ServicePost> for TwitterActor {
             }
             .into_actor(self)
             .map(|result, actor, _ctx| {
-                // Update actor state based on result
                 if let Ok(ref post_result) = result {
                     if post_result.success {
                         actor.last_post_time = Some(Instant::now());
                         actor.service_status.last_post_time = Some(Utc::now().timestamp());
                         actor.service_status.healthy = true;
+                        actor.service_status.error_count = 0;
                     } else {
                         actor.service_status.error_count += 1;
                         actor.service_status.healthy = false;
 
-                        // Check for rate limiting
                         if let Some(ref error_msg) = post_result.error_message {
                             let error_str = error_msg.to_lowercase();
                             if error_str.contains("rate limit")
@@ -172,10 +171,21 @@ impl Handler<ServicePost> for TwitterActor {
                                 actor.service_status.rate_limited = true;
                                 actor.rate_limit_reset =
                                     Some(Instant::now() + Duration::from_secs(3600));
-                                warn!("Twitter rate limit detected, will retry in 1 hour");
+                                warn!(
+                                    "{} rate limit detected, will retry in 1 hour",
+                                    actor.service.name()
+                                );
                             }
                         }
                     }
+                } else if let Err(ref e) = result {
+                    error!(
+                        "ServicePost handler future itself failed for {}: {:?}",
+                        actor.service.name(),
+                        e
+                    );
+                    actor.service_status.error_count += 1;
+                    actor.service_status.healthy = false;
                 }
                 result
             }),

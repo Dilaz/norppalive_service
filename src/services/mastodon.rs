@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use megalodon::{
     entities::{StatusVisibility, UploadMedia},
     megalodon::PostStatusInputOptions,
@@ -11,6 +12,7 @@ use super::SocialMediaService;
 #[derive(Debug, Default, Clone)]
 pub struct MastodonService;
 
+#[async_trait]
 impl SocialMediaService for MastodonService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         info!("Logging in to Mastodon");

@@ -1,5 +1,5 @@
 mod bluesky;
-mod generic;
+pub mod generic;
 mod kafka;
 mod mastodon;
 mod twitter;

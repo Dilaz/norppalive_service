@@ -28,7 +28,7 @@ megalodon = "1.0.0"
 miette = { version = "7.6.0", features = ["fancy"] }
 rand = "0.9.1"
 rdkafka = "0.37.0"
-reqwest = { version = "0.12.18", features = ["multipart", "json", "blocking", "stream"] }
+reqwest = { version = "0.12.19", features = ["multipart", "json", "blocking", "stream"] }
 reqwest_old = { version = "0.11.27", features = ["multipart", "json", "blocking", "stream"], package = "reqwest" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
@@ -41,12 +41,39 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 twitter-api-v1 = { version = "0.2.1", features = ["tokio", "with_tokio_fs"] }
 twitter-v2 = "0.1.8"
+mockall = { version = "0.13.1", optional = true }
 
 [dev-dependencies]
-mockall = "0.13.1"
+
+[features]
+test-utils = ["dep:mockall"]
+
+# Added section for integration tests to enable features
+[[test]]
+name = "integration_tests" # This should match the filename src/tests/integration_tests.rs
+harness = true # Standard test harness
+# No explicit path needed if it's in the default tests/ directory
+# required-features = ["test-utils"] # This is for the test binary itself, not what we need here
+
+[[test]]
+name = "actor_integration_tests"
+harness = true
+
+[[test]]
+name = "services_integration_tests"
+harness = true
 
 [profile.release]
 strip = true
 lto = true
 panic = "abort"
 opt-level = "z"
+
+# To enable features for the library when a specific test is compiled,
+# you typically rely on dev-dependencies enabling features for the main lib, 
+# or ensure the feature is active for the test profile.
+# A common way is to add the library itself to dev-dependencies with the feature.
+
+[dev-dependencies.norppalive_service]
+path = "."
+features = ["test-utils"]

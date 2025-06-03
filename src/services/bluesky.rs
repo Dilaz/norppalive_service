@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use atrium_api::{
     agent::{atp_agent::store::MemorySessionStore, atp_agent::AtpAgent},
     com::atproto::repo::create_record::InputData,
@@ -31,6 +32,7 @@ pub struct BlueskyService {
     is_logged_in: Arc<Mutex<bool>>,
 }
 
+#[async_trait]
 impl SocialMediaService for BlueskyService {
     async fn post(&self, message: &str, image_path: &str) -> Result<(), NorppaliveError> {
         // Check if we need to login

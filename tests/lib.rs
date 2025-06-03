@@ -1,7 +1,5 @@
 // Common test utilities and re-exports for integration tests
 
-pub mod mocks;
-
 // Common test setup
 pub fn init_test_tracing() {
     use tracing_subscriber::layer::SubscriberExt;

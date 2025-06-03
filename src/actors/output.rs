@@ -8,19 +8,16 @@ use crate::messages::{
 };
 use crate::utils::image_utils::draw_boxes_on_provided_image;
 use crate::utils::output::OutputService;
-
-#[cfg(test)]
-use crate::utils::output::{MockOutputService, OutputServiceTrait};
+use crate::utils::output::OutputServiceTrait;
 
 /// OutputActor coordinates output operations (posting, saving)
 pub struct OutputActor {
-    output_service: OutputService,
-    use_mocks: bool,
+    output_service: Box<dyn OutputServiceTrait>,
 }
 
 impl Default for OutputActor {
     fn default() -> Self {
-        Self::new()
+        Self::new(Box::new(OutputService::default()))
     }
 }
 
@@ -37,23 +34,8 @@ impl Actor for OutputActor {
 }
 
 impl OutputActor {
-    pub fn new() -> Self {
-        // Check if we're in a test environment
-        let use_mocks = std::env::var("CARGO_PKG_NAME").is_ok()
-            && (cfg!(test) || std::env::var("NORPPALIVE_USE_MOCKS").is_ok());
-
-        Self {
-            output_service: OutputService::default(),
-            use_mocks,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn new_with_mocks() -> Self {
-        Self {
-            output_service: OutputService::default(),
-            use_mocks: true,
-        }
+    pub fn new(output_service: Box<dyn OutputServiceTrait>) -> Self {
+        Self { output_service }
     }
 }
 
@@ -67,32 +49,8 @@ impl Handler<PostToSocialMedia> for OutputActor {
         );
 
         let image = msg.image;
-        let use_mocks = self.use_mocks;
-
-        if use_mocks {
-            // In tests, use mock service to avoid real posts
-            Box::pin(
-                async move {
-                    #[cfg(test)]
-                    {
-                        let mock_service = MockOutputService::new();
-                        mock_service.post_to_social_media(image).await
-                    }
-                    #[cfg(not(test))]
-                    {
-                        info!("Mock mode enabled - skipping social media posting");
-                        Ok(())
-                    }
-                }
-                .into_actor(self),
-            )
-        } else {
-            // In production, use the stored service
-            let output_service = self.output_service.clone();
-            Box::pin(
-                async move { output_service.post_to_social_media(image).await }.into_actor(self),
-            )
-        }
+        let fut = self.output_service.post_to_social_media(image);
+        Box::pin(fut.into_actor(self))
     }
 }
 
@@ -195,6 +153,8 @@ impl Handler<GetServiceStatus> for OutputActor {
 mod tests {
     use super::*;
     use crate::utils::detection_utils::DetectionResult;
+    #[cfg(any(test, feature = "test-utils"))]
+    use crate::utils::output::MockOutputService;
     use crate::utils::temperature_map::TemperatureMap;
 
     use image::{DynamicImage, RgbImage};
@@ -216,7 +176,7 @@ mod tests {
 
     #[actix::test]
     async fn test_output_actor_startup() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         // Test getting service status
         let status = actor.send(GetServiceStatus).await.unwrap().unwrap();
@@ -228,7 +188,7 @@ mod tests {
 
     #[actix::test]
     async fn test_post_to_social_media() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         let test_image = create_test_image();
         let test_detection = create_test_detection();
@@ -248,7 +208,7 @@ mod tests {
 
     #[actix::test]
     async fn test_save_detection_image() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         let test_image = create_test_image();
         let test_detection = create_test_detection();
@@ -267,7 +227,7 @@ mod tests {
 
     #[actix::test]
     async fn test_save_heatmap_visualization() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         let temp_map = TemperatureMap::new(100, 100);
 
@@ -282,7 +242,7 @@ mod tests {
 
     #[actix::test]
     async fn test_get_service_status() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         let status = actor.send(GetServiceStatus).await.unwrap().unwrap();
 
@@ -296,7 +256,7 @@ mod tests {
 
     #[actix::test]
     async fn test_multiple_concurrent_operations() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         let test_image1 = create_test_image();
         let test_image2 = create_test_image();
@@ -334,7 +294,7 @@ mod tests {
 
     #[actix::test]
     async fn test_empty_detections_handling() {
-        let actor = OutputActor::new_with_mocks().start();
+        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
         let test_image = create_test_image();
 
