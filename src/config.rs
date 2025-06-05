@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
-use rand::seq::{IndexedRandom, SliceRandom};
-use rand::{rng, thread_rng};
+use rand::seq::IndexedRandom;
+use rand::rng;
 use serde::Deserialize;
 
 lazy_static! {
