@@ -78,24 +78,6 @@ impl TwitterActor {
 
         true
     }
-
-    /// Handle posting errors and update status
-    #[allow(dead_code)]
-    fn handle_post_error(&mut self, error: &NorppaliveError) {
-        self.service_status.error_count += 1;
-        self.service_status.healthy = false;
-
-        // Check if it's a rate limit error
-        let error_str = error.to_string().to_lowercase();
-        if error_str.contains("rate limit") || error_str.contains("too many requests") {
-            self.service_status.rate_limited = true;
-            // Set rate limit reset time to 1 hour from now
-            self.rate_limit_reset = Some(Instant::now() + Duration::from_secs(3600));
-            warn!("Twitter rate limit detected, will retry in 1 hour");
-        }
-
-        error!("Twitter posting failed: {}", error);
-    }
 }
 
 impl Handler<ServicePost> for TwitterActor {
