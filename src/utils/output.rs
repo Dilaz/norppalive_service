@@ -114,7 +114,7 @@ impl OutputServiceTrait for OutputService {
                 .cloned()
                 .unwrap_or_else(|| {
                     tracing::warn!("No messages configured in config.toml, using default message.");
-                    "Rare Saimaa ringed seal detected! #norppalive".to_string()
+                    "Norppa havaittu! #norppalive".to_string()
                 });
 
             let message = if CONFIG.output.replace_hashtags {
