@@ -80,7 +80,7 @@ pub trait DetectionKafkaServiceTrait {
     async fn send_detection_notification(
         &self,
         _detections: &[crate::utils::detection_utils::DetectionResult],
-        image_filename: &str,
+        image_data: &[u8],
         detection_type: &str,
     ) -> Result<(), NorppaliveError>;
 }
@@ -120,7 +120,7 @@ impl DetectionKafkaServiceTrait for MockDetectionKafkaService {
     async fn send_detection_notification(
         &self,
         _detections: &[crate::utils::detection_utils::DetectionResult],
-        image_filename: &str,
+        _image_data: &[u8],
         detection_type: &str,
     ) -> Result<(), NorppaliveError> {
         if self.should_fail {
@@ -128,8 +128,9 @@ impl DetectionKafkaServiceTrait for MockDetectionKafkaService {
         }
 
         let mock_message = format!(
-            "Mock Kafka static message: type '{}', image: '{}'",
-            detection_type, image_filename
+            "Mock Kafka static message: type '{}', image_data_len: '{}'",
+            detection_type,
+            _image_data.len()
         );
 
         {
@@ -174,17 +175,9 @@ impl DetectionKafkaServiceTrait for DetectionKafkaService {
     async fn send_detection_notification(
         &self,
         _detections: &[crate::utils::detection_utils::DetectionResult],
-        image_filename: &str,
+        image_data: &[u8],
         _detection_type: &str,
     ) -> Result<(), NorppaliveError> {
-        let image_data = std::fs::read(image_filename).map_err(|e| {
-            error!("Failed to read image file {}: {}", image_filename, e);
-            NorppaliveError::Other(format!(
-                "Failed to read image file {}: {}",
-                image_filename, e
-            ))
-        })?;
-
         let image_size = image_data.len();
         let base64_encoded = base64::engine::general_purpose::STANDARD.encode(image_data);
 
@@ -232,13 +225,13 @@ impl DetectionKafkaService {
     pub async fn send_detection_notification(
         &self,
         detections: &[crate::utils::detection_utils::DetectionResult],
-        image_filename: &str,
+        image_data: &[u8],
         detection_type: &str,
     ) -> Result<(), NorppaliveError> {
         DetectionKafkaServiceTrait::send_detection_notification(
             self,
             detections,
-            image_filename,
+            image_data,
             detection_type,
         )
         .await
@@ -260,6 +253,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_kafka_send_detection() {
         let mock_service = MockDetectionKafkaService::new();
+        let dummy_image_data = b"test_image_data";
 
         let detection = DetectionResult {
             r#box: [10, 20, 30, 40],
@@ -269,21 +263,23 @@ mod tests {
         };
 
         let result = mock_service
-            .send_detection_notification(&[detection], "test_image.jpg", "test_event_type")
+            .send_detection_notification(&[detection], dummy_image_data, "test_event_type")
             .await;
 
         assert!(result.is_ok());
         assert_eq!(mock_service.get_message_count(), 1);
 
         let messages = mock_service.get_messages_sent();
-        assert!(messages[0].contains(
-            "Mock Kafka static message: type 'test_event_type', image: 'test_image.jpg'"
-        ));
+        assert!(messages[0].contains(&format!(
+            "Mock Kafka static message: type 'test_event_type', image_data_len: '{}'",
+            dummy_image_data.len()
+        )));
     }
 
     #[tokio::test]
     async fn test_mock_kafka_failure() {
         let mock_service = MockDetectionKafkaService::new().with_failure(true);
+        let dummy_image_data = b"test_image_data";
 
         let detection = DetectionResult {
             r#box: [10, 20, 30, 40],
@@ -293,7 +289,7 @@ mod tests {
         };
 
         let result = mock_service
-            .send_detection_notification(&[detection], "test_image.jpg", "test_event")
+            .send_detection_notification(&[detection], dummy_image_data, "test_event")
             .await;
 
         assert!(result.is_err());

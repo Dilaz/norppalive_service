@@ -370,7 +370,7 @@ impl StreamActor {
 
                     // Process every nth frame based on configuration
                     let frame_skip = if CONFIG.stream.only_keyframes { 1 } else { 30 };
-                    if frame_index % frame_skip != 0 {
+                    if !frame_index.is_multiple_of(frame_skip) {
                         continue;
                     }
 
