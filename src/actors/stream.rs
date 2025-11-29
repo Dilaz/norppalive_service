@@ -144,9 +144,8 @@ impl StreamActor {
             return Ok(stream_url.to_string());
         }
 
-        let output_result = Command::new("sh")
-            .arg("-c")
-            .arg(format!("yt-dlp -f 232 -g {}", stream_url))
+        let output_result = Command::new("yt-dlp")
+            .args(["-f", "232", "-g", stream_url])
             .output();
 
         match output_result {
