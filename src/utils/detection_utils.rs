@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use chrono::Local;
 use image;
+use image::codecs::jpeg::JpegEncoder;
+use image::ColorType;
 use image::DynamicImage;
 use lazy_static::lazy_static;
 use miette::Result;
 use reqwest::{multipart, Client};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json;
+use std::io::Cursor;
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -431,19 +434,40 @@ impl DetectionService {
                     .join(format!("detection_{}.jpg", timestamp))
                     .display()
             );
-            if let Err(e) = image_buffer.save(&filename) {
-                error!("Failed to save image to file {}: {}", filename, e);
-            } else {
-                info!("Image saved to file: {}", filename);
-                self.last_image_save_time = Local::now().timestamp();
-                let owned_detections: Vec<DetectionResult> =
-                    acceptable_detections.iter().map(|&d| d.clone()).collect();
-                if let Err(e) = self
-                    .detection_kafka_service
-                    .send_detection_notification(&owned_detections, &filename, "detection")
-                    .await
-                {
-                    error!("Failed to send detection notification to Kafka: {}", e);
+
+            let rgb_image = image_buffer.to_rgb8();
+            let (width, height) = rgb_image.dimensions();
+            let raw_pixels = rgb_image.as_raw();
+
+            let mut encoded_image_data: Vec<u8> = Vec::new();
+            let mut writer = Cursor::new(&mut encoded_image_data);
+
+            let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
+            match encoder.encode(raw_pixels, width, height, ColorType::Rgb8.into()) {
+                Ok(_) => {
+                    if let Err(e) = std::fs::write(&filename, &encoded_image_data) {
+                        error!("Failed to save image to file {}: {}", filename, e);
+                    } else {
+                        info!("Image saved to file: {}", filename);
+                        self.last_image_save_time = Local::now().timestamp();
+                        let owned_detections: Vec<DetectionResult> =
+                            acceptable_detections.iter().map(|&d| d.clone()).collect();
+
+                        if let Err(e) = self
+                            .detection_kafka_service
+                            .send_detection_notification(
+                                &owned_detections,
+                                &encoded_image_data,
+                                "detection",
+                            )
+                            .await
+                        {
+                            error!("Failed to send detection notification to Kafka: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to encode image to JPEG using JpegEncoder: {}. Image not saved or sent via Kafka.", e);
                 }
             }
         } else {

@@ -1,5 +1,5 @@
 use actix::prelude::*;
-use clap::{command, Parser};
+use clap::Parser;
 use lazy_static::lazy_static;
 use miette::Result;
 use tracing::{error, info};
