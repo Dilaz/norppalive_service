@@ -3,8 +3,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
+use crate::actors::OutputActor;
 use crate::error::NorppaliveError;
-use crate::messages::{DetectionStats, DetectorReady, GetDetectionStats, ProcessFrame};
+use crate::messages::{
+    DetectionCompleted, DetectionStats, DetectorReady, GetDetectionStats, ProcessFrame,
+};
 use crate::utils::detection_utils::{DetectionResult, DetectionService, DetectionServiceTrait};
 
 #[cfg(test)]
@@ -16,6 +19,7 @@ pub struct DetectionActor {
     total_detections: u64,
     consecutive_detections: u32,
     last_detection_time: i64,
+    output_actor: Option<Addr<OutputActor>>,
 }
 
 impl Default for DetectionActor {
@@ -25,6 +29,7 @@ impl Default for DetectionActor {
             total_detections: 0,
             consecutive_detections: 0,
             last_detection_time: 0,
+            output_actor: None,
         }
     }
 }
@@ -46,6 +51,13 @@ impl DetectionActor {
         Self::default()
     }
 
+    pub fn with_output_actor(output_actor: Addr<OutputActor>) -> Self {
+        Self {
+            output_actor: Some(output_actor),
+            ..Self::default()
+        }
+    }
+
     #[cfg(test)]
     pub fn new_with_service(service: Arc<Mutex<dyn DetectionServiceTrait + Send>>) -> Self {
         Self {
@@ -53,6 +65,7 @@ impl DetectionActor {
             total_detections: 0,
             consecutive_detections: 0,
             last_detection_time: 0,
+            output_actor: None,
         }
     }
 
@@ -86,27 +99,54 @@ impl Handler<ProcessFrame> for DetectionActor {
         info!("Processing frame: {}", msg.image_path);
 
         let image_path = msg.image_path.clone();
+        let image_path_for_output = msg.image_path.clone();
         let timestamp = msg.timestamp;
-        let current_consecutive = self.consecutive_detections;
         let reply_to_addr = msg.reply_to.clone();
         let detection_service = self.detection_service.clone();
+        let output_actor = self.output_actor.clone();
 
         Box::pin(
             async move {
                 let mut service_instance = detection_service.lock().await;
                 let detection_result = service_instance.do_detection(&image_path).await;
 
+                // Update temperature map with detections
                 if let Ok(detections) = &detection_result {
-                    service_instance
-                        .process_detection(detections, current_consecutive)
-                        .await;
+                    service_instance.update_temperature_map(detections);
                 }
-                detection_result
+
+                // Filter detections to only include high-confidence, valid ones
+                let filtered_detections = if let Ok(detections) = &detection_result {
+                    service_instance
+                        .filter_acceptable_detections(detections)
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
+
+                (detection_result, filtered_detections)
             }
             .into_actor(self)
-            .map(move |result, actor, _ctx| {
-                actor.update_detection_state(timestamp, &result);
+            .map(move |(result, filtered_detections), actor, _ctx| {
+                // Update state based on FILTERED detections (not raw)
+                let filtered_result = Ok(filtered_detections.clone());
+                actor.update_detection_state(timestamp, &filtered_result);
                 reply_to_addr.do_send(DetectorReady);
+
+                // Send DetectionCompleted to OutputActor with FILTERED detections only
+                if !filtered_detections.is_empty() {
+                    if let Some(ref output) = output_actor {
+                        output.do_send(DetectionCompleted {
+                            detections: filtered_detections,
+                            timestamp,
+                            consecutive_detections: actor.consecutive_detections,
+                            image_path: image_path_for_output,
+                        });
+                    }
+                }
+
                 result
             }),
         )

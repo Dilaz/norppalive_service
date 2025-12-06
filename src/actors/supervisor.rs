@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
 use crate::error::NorppaliveError;
-use crate::messages::supervisor::SystemShutdown;
+use crate::messages::supervisor::{RegisterActor, SystemShutdown};
 use crate::messages::{
     ActorFailed, ActorHealth, GetSystemHealth, HealthCheck, RestartActor, ShutdownSystem,
     SystemHealth,
@@ -173,6 +173,14 @@ impl Handler<HealthCheck> for SupervisorActor {
     }
 }
 
+impl Handler<RegisterActor> for SupervisorActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: RegisterActor, _ctx: &mut Self::Context) -> Self::Result {
+        self.register_actor(msg.name);
+    }
+}
+
 impl Handler<SystemShutdown> for SupervisorActor {
     type Result = ();
 
@@ -185,10 +193,9 @@ impl Handler<SystemShutdown> for SupervisorActor {
             actix::System::current().stop();
         });
 
-        // Also schedule a force shutdown as a backup in case graceful shutdown fails
+        // Log if graceful shutdown takes too long (but don't force exit to allow proper cleanup)
         ctx.run_later(std::time::Duration::from_secs(5), |_actor, _ctx| {
-            error!("SupervisorActor: Graceful shutdown timed out after 5 seconds. Force stopping system.");
-            std::process::exit(1);
+            warn!("SupervisorActor: Graceful shutdown taking longer than 5 seconds. Waiting for cleanup to complete...");
         });
     }
 }

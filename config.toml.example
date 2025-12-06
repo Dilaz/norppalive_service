@@ -22,6 +22,7 @@ heatmap_decay_rate = 0.9  # Rate at which heat decays over time (0-1)
 heatmap_threshold = 3.0  # Threshold at which to trigger detection alert
 heatmap_save_interval = 5  # How often to save heatmap images (in minutes)
 save_image_confidence = 65  # If any detection is above this confidence, save the image
+minimum_post_confidence = 85  # Minimum confidence required to post to social media (higher = fewer false positives)
 
 [output]
 post_interval = 120 # How often to post in minutes

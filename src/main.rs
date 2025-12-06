@@ -1,6 +1,5 @@
 use actix::prelude::*;
 use clap::Parser;
-use lazy_static::lazy_static;
 use miette::Result;
 use tracing::{error, info};
 use tracing_subscriber::layer::SubscriberExt;
@@ -14,10 +13,12 @@ pub mod messages;
 pub mod services;
 pub mod utils;
 
-use crate::messages::supervisor::SystemShutdown;
+use crate::config::CONFIG;
+use crate::messages::supervisor::{RegisterActor, SystemShutdown};
+use actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
 use actors::{DetectionActor, OutputActor, StreamActor, SupervisorActor};
-use config::Config;
 use messages::{GetSystemHealth, StartStream};
+use services::{BlueskyService, KafkaService, MastodonService, ServiceType, TwitterService};
 use utils::output::OutputService;
 
 #[derive(Parser)]
@@ -27,13 +28,11 @@ struct Args {
     config: String,
 }
 
-lazy_static! {
-    static ref ARGS: Args = Args::parse();
-    static ref CONFIG: Config =
-        toml::from_str(&std::fs::read_to_string(&ARGS.config).unwrap()).unwrap();
-}
-
 fn main() -> Result<()> {
+    // Parse CLI args and set CONFIG_PATH before any config access
+    let args = Args::parse();
+    std::env::set_var("CONFIG_PATH", &args.config);
+
     tracing::info!("Starting!");
 
     // Initialize tracing
@@ -49,12 +48,58 @@ fn main() -> Result<()> {
     let system = System::new();
 
     system.block_on(async {
-        // Start the actor system
+        // Start the supervisor
         let supervisor = SupervisorActor::new().start();
-        let detection_actor = DetectionActor::new().start();
+
+        // Start service actors
+        let twitter_actor =
+            TwitterActor::new(ServiceType::TwitterService(TwitterService)).start();
+        let bluesky_actor =
+            BlueskyActor::new(ServiceType::BlueskyService(BlueskyService::default())).start();
+        let mastodon_actor =
+            MastodonActor::new(ServiceType::MastodonService(MastodonService)).start();
+        let kafka_actor =
+            KafkaActor::new(ServiceType::KafkaService(KafkaService::default())).start();
+
+        // Start OutputActor with service actors
+        let output_actor = OutputActor::with_services(
+            Box::new(OutputService::default()),
+            Some(twitter_actor),
+            Some(bluesky_actor),
+            Some(mastodon_actor),
+            Some(kafka_actor),
+        )
+        .start();
+
+        // Start DetectionActor with OutputActor
+        let detection_actor = DetectionActor::with_output_actor(output_actor).start();
+
+        // Start StreamActor
         let stream_actor =
             StreamActor::with_actors(detection_actor.clone(), supervisor.clone()).start();
-        let _output_actor = OutputActor::new(Box::new(OutputService::default())).start();
+
+        // Register all actors with supervisor for health monitoring
+        supervisor.do_send(RegisterActor {
+            name: "StreamActor".to_string(),
+        });
+        supervisor.do_send(RegisterActor {
+            name: "DetectionActor".to_string(),
+        });
+        supervisor.do_send(RegisterActor {
+            name: "OutputActor".to_string(),
+        });
+        supervisor.do_send(RegisterActor {
+            name: "TwitterActor".to_string(),
+        });
+        supervisor.do_send(RegisterActor {
+            name: "BlueskyActor".to_string(),
+        });
+        supervisor.do_send(RegisterActor {
+            name: "MastodonActor".to_string(),
+        });
+        supervisor.do_send(RegisterActor {
+            name: "KafkaActor".to_string(),
+        });
 
         info!("Actor system started");
 
