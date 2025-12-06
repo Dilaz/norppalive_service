@@ -1,10 +1,12 @@
 use actix::prelude::*;
-use tracing::info;
+use tracing::{debug, info, warn};
 
+use crate::actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
+use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 use crate::messages::{
-    GetServiceStatus, PostToSocialMedia, SaveDetectionImage, SaveHeatmapVisualization,
-    ServiceStatus,
+    DetectionCompleted, GetServiceStatus, PostToSocialMedia, SaveDetectionImage,
+    SaveHeatmapVisualization, ServicePost, ServiceStatus,
 };
 use crate::utils::image_utils::draw_boxes_on_provided_image;
 use crate::utils::output::OutputService;
@@ -13,11 +15,25 @@ use crate::utils::output::OutputServiceTrait;
 /// OutputActor coordinates output operations (posting, saving)
 pub struct OutputActor {
     output_service: Box<dyn OutputServiceTrait>,
+    twitter_actor: Option<Addr<TwitterActor>>,
+    bluesky_actor: Option<Addr<BlueskyActor>>,
+    mastodon_actor: Option<Addr<MastodonActor>>,
+    kafka_actor: Option<Addr<KafkaActor>>,
+    last_post_time: i64,
+    last_save_time: i64,
 }
 
 impl Default for OutputActor {
     fn default() -> Self {
-        Self::new(Box::new(OutputService::default()))
+        Self {
+            output_service: Box::new(OutputService::default()),
+            twitter_actor: None,
+            bluesky_actor: None,
+            mastodon_actor: None,
+            kafka_actor: None,
+            last_post_time: 0,
+            last_save_time: 0,
+        }
     }
 }
 
@@ -35,7 +51,59 @@ impl Actor for OutputActor {
 
 impl OutputActor {
     pub fn new(output_service: Box<dyn OutputServiceTrait>) -> Self {
-        Self { output_service }
+        Self {
+            output_service,
+            twitter_actor: None,
+            bluesky_actor: None,
+            mastodon_actor: None,
+            kafka_actor: None,
+            last_post_time: 0,
+            last_save_time: 0,
+        }
+    }
+
+    pub fn with_services(
+        output_service: Box<dyn OutputServiceTrait>,
+        twitter_actor: Option<Addr<TwitterActor>>,
+        bluesky_actor: Option<Addr<BlueskyActor>>,
+        mastodon_actor: Option<Addr<MastodonActor>>,
+        kafka_actor: Option<Addr<KafkaActor>>,
+    ) -> Self {
+        Self {
+            output_service,
+            twitter_actor,
+            bluesky_actor,
+            mastodon_actor,
+            kafka_actor,
+            last_post_time: 0,
+            last_save_time: 0,
+        }
+    }
+
+    fn should_post(
+        &self,
+        consecutive_detections: u32,
+        timestamp: i64,
+        max_confidence: u8,
+    ) -> bool {
+        let has_enough_detections =
+            consecutive_detections >= CONFIG.detection.minimum_detection_frames;
+        let enough_time_passed =
+            timestamp - self.last_post_time >= CONFIG.output.post_interval;
+        let confidence_high_enough = max_confidence >= CONFIG.detection.minimum_post_confidence;
+
+        if has_enough_detections && enough_time_passed && !confidence_high_enough {
+            info!(
+                "Skipping post: max confidence {} < minimum required {}",
+                max_confidence, CONFIG.detection.minimum_post_confidence
+            );
+        }
+
+        has_enough_detections && enough_time_passed && confidence_high_enough
+    }
+
+    fn should_save_image(&self, timestamp: i64) -> bool {
+        timestamp - self.last_save_time >= CONFIG.output.image_save_interval
     }
 }
 
@@ -142,10 +210,106 @@ impl Handler<GetServiceStatus> for OutputActor {
         Ok(ServiceStatus {
             name: "Output".to_string(),
             healthy: true,
-            last_post_time: None,
+            last_post_time: if self.last_post_time > 0 {
+                Some(self.last_post_time)
+            } else {
+                None
+            },
             error_count: 0,
             rate_limited: false,
         })
+    }
+}
+
+impl Handler<DetectionCompleted> for OutputActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: DetectionCompleted, _ctx: &mut Self::Context) -> Self::Result {
+        let detection_count = msg.detections.len();
+        let max_confidence = msg.detections.iter().map(|d| d.conf).max().unwrap_or(0);
+
+        info!(
+            "DetectionCompleted received: {} detections (max conf: {}%), {} consecutive, timestamp: {}",
+            detection_count, max_confidence, msg.consecutive_detections, msg.timestamp
+        );
+
+        // Only process if there are detections
+        if msg.detections.is_empty() {
+            debug!("No detections to process");
+            return;
+        }
+
+        // Check if we should save the image
+        if self.should_save_image(msg.timestamp) {
+            self.last_save_time = msg.timestamp;
+
+            // Load image and draw bounding boxes
+            match image::open(&msg.image_path) {
+                Ok(image) => {
+                    match draw_boxes_on_provided_image(image.clone(), &msg.detections) {
+                        Ok(annotated_image) => {
+                            // Save the annotated image
+                            let save_path = format!(
+                                "{}/detection-{}.jpg",
+                                CONFIG.output.output_file_folder, msg.timestamp
+                            );
+                            if let Err(e) =
+                                std::fs::create_dir_all(&CONFIG.output.output_file_folder)
+                            {
+                                warn!("Failed to create output directory: {}", e);
+                            }
+                            if let Err(e) = annotated_image.save(&save_path) {
+                                warn!("Failed to save detection image: {}", e);
+                            } else {
+                                info!("Detection image saved to: {}", save_path);
+                            }
+                        }
+                        Err(e) => warn!("Failed to draw bounding boxes: {}", e),
+                    }
+                }
+                Err(e) => warn!("Failed to open image {}: {}", msg.image_path, e),
+            }
+        }
+
+        // Check if we should post to social media (includes confidence check)
+        if self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence) {
+            self.last_post_time = msg.timestamp;
+            info!(
+                "Posting to social media: {} detections (max conf: {}%) after {} consecutive frames",
+                detection_count, max_confidence, msg.consecutive_detections
+            );
+
+            // Create the annotated image path
+            let annotated_path = format!(
+                "{}/detection-{}.jpg",
+                CONFIG.output.output_file_folder, msg.timestamp
+            );
+
+            let message = format!(
+                "Saimaa ringed seal detected! {} seal(s) spotted. #Norppalive #SaimaaRingedSeal",
+                detection_count
+            );
+
+            // Send to all connected service actors
+            let service_post = ServicePost {
+                message: message.clone(),
+                image_path: annotated_path,
+                service_name: "all".to_string(),
+            };
+
+            if let Some(ref twitter) = self.twitter_actor {
+                twitter.do_send(service_post.clone());
+            }
+            if let Some(ref bluesky) = self.bluesky_actor {
+                bluesky.do_send(service_post.clone());
+            }
+            if let Some(ref mastodon) = self.mastodon_actor {
+                mastodon.do_send(service_post.clone());
+            }
+            if let Some(ref kafka) = self.kafka_actor {
+                kafka.do_send(service_post);
+            }
+        }
     }
 }
 

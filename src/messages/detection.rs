@@ -19,6 +19,7 @@ pub struct DetectionCompleted {
     pub detections: Vec<DetectionResult>,
     pub timestamp: i64,
     pub consecutive_detections: u32,
+    pub image_path: String,
 }
 
 #[derive(Message)]
