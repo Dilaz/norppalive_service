@@ -85,13 +85,14 @@ fn main() -> Result<()> {
             None
         };
 
-        // Start OutputActor with service actors
+        // Start OutputActor with service actors and supervisor for restart notifications
         let output_actor = OutputActor::with_services(
             Box::new(OutputService::default()),
             twitter_actor.clone(),
             bluesky_actor.clone(),
             mastodon_actor.clone(),
             kafka_actor.clone(),
+            Some(supervisor.clone()),
         )
         .start();
 

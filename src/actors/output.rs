@@ -2,8 +2,10 @@ use actix::prelude::*;
 use tracing::{debug, info, warn};
 
 use crate::actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
+use crate::actors::SupervisorActor;
 use crate::config::CONFIG;
 use crate::error::NorppaliveError;
+use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts};
 use crate::messages::{
     DetectionCompleted, GetServiceStatus, PostToSocialMedia, SaveDetectionImage,
     SaveHeatmapVisualization, ServicePost, ServiceStatus,
@@ -19,6 +21,7 @@ pub struct OutputActor {
     bluesky_actor: Option<Addr<BlueskyActor>>,
     mastodon_actor: Option<Addr<MastodonActor>>,
     kafka_actor: Option<Addr<KafkaActor>>,
+    supervisor_actor: Option<Addr<SupervisorActor>>,
     last_post_time: i64,
     last_save_time: i64,
 }
@@ -31,6 +34,7 @@ impl Default for OutputActor {
             bluesky_actor: None,
             mastodon_actor: None,
             kafka_actor: None,
+            supervisor_actor: None,
             last_post_time: 0,
             last_save_time: 0,
         }
@@ -40,8 +44,16 @@ impl Default for OutputActor {
 impl Actor for OutputActor {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         info!("OutputActor started");
+
+        // Subscribe to restart notifications from supervisor
+        if let Some(ref supervisor) = self.supervisor_actor {
+            supervisor.do_send(SubscribeToRestarts {
+                subscriber: ctx.address().recipient(),
+            });
+            info!("OutputActor subscribed to restart notifications");
+        }
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -57,6 +69,7 @@ impl OutputActor {
             bluesky_actor: None,
             mastodon_actor: None,
             kafka_actor: None,
+            supervisor_actor: None,
             last_post_time: 0,
             last_save_time: 0,
         }
@@ -68,6 +81,7 @@ impl OutputActor {
         bluesky_actor: Option<Addr<BlueskyActor>>,
         mastodon_actor: Option<Addr<MastodonActor>>,
         kafka_actor: Option<Addr<KafkaActor>>,
+        supervisor_actor: Option<Addr<SupervisorActor>>,
     ) -> Self {
         Self {
             output_service,
@@ -75,6 +89,7 @@ impl OutputActor {
             bluesky_actor,
             mastodon_actor,
             kafka_actor,
+            supervisor_actor,
             last_post_time: 0,
             last_save_time: 0,
         }
@@ -246,90 +261,73 @@ impl Handler<DetectionCompleted> for OutputActor {
             return;
         }
 
-        // Check if we should save the image (considers interval and confidence threshold)
-        if self.should_save_image(msg.timestamp, max_confidence) {
-            self.last_save_time = msg.timestamp;
+        // Determine if we need to save or post
+        let should_save = self.should_save_image(msg.timestamp, max_confidence);
+        let should_post = self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence);
 
-            // Load image and draw bounding boxes
-            match image::open(&msg.image_path) {
-                Ok(image) => {
-                    match draw_boxes_on_provided_image(image.clone(), &msg.detections) {
-                        Ok(annotated_image) => {
-                            // Save the annotated image
-                            let save_path = format!(
-                                "{}/detection-{}.jpg",
-                                CONFIG.output.output_file_folder, msg.timestamp
-                            );
-                            if let Err(e) =
-                                std::fs::create_dir_all(&CONFIG.output.output_file_folder)
-                            {
-                                warn!("Failed to create output directory: {}", e);
-                            }
-                            if let Err(e) = annotated_image.save(&save_path) {
-                                warn!("Failed to save detection image: {}", e);
-                            } else {
-                                info!("Detection image saved to: {}", save_path);
-                            }
-                        }
-                        Err(e) => warn!("Failed to draw bounding boxes: {}", e),
-                    }
+        // Early return if we don't need to do anything
+        if !should_save && !should_post {
+            debug!("Neither save nor post conditions met, skipping");
+            return;
+        }
+
+        // Generate annotated image once if needed for either operation
+        let annotated_path = format!(
+            "{}/detection-{}.jpg",
+            CONFIG.output.output_file_folder, msg.timestamp
+        );
+
+        // Create output directory if needed
+        if let Err(e) = std::fs::create_dir_all(&CONFIG.output.output_file_folder) {
+            warn!("Failed to create output directory: {}", e);
+            return;
+        }
+
+        // Load and annotate the image once
+        let annotated_image = match image::open(&msg.image_path) {
+            Ok(image) => match draw_boxes_on_provided_image(image, &msg.detections) {
+                Ok(annotated) => Some(annotated),
+                Err(e) => {
+                    warn!("Failed to draw bounding boxes: {}", e);
+                    None
                 }
-                Err(e) => warn!("Failed to open image {}: {}", msg.image_path, e),
+            },
+            Err(e) => {
+                warn!("Failed to open image {}: {}", msg.image_path, e);
+                None
+            }
+        };
+
+        let Some(annotated_image) = annotated_image else {
+            warn!("Could not create annotated image, skipping save and post");
+            return;
+        };
+
+        // Save the annotated image if conditions are met
+        if should_save {
+            self.last_save_time = msg.timestamp;
+            if let Err(e) = annotated_image.save(&annotated_path) {
+                warn!("Failed to save detection image: {}", e);
+            } else {
+                info!("Detection image saved to: {}", annotated_path);
             }
         }
 
-        // Check if we should post to social media (includes confidence check)
-        if self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence) {
+        // Post to social media if conditions are met
+        if should_post {
             self.last_post_time = msg.timestamp;
             info!(
                 "Posting to social media: {} detections (max conf: {}%) after {} consecutive frames",
                 detection_count, max_confidence, msg.consecutive_detections
             );
 
-            // Create the annotated image path
-            let annotated_path = format!(
-                "{}/detection-{}.jpg",
-                CONFIG.output.output_file_folder, msg.timestamp
-            );
-
-            // Ensure the annotated image exists before posting
-            let image_ready = if std::path::Path::new(&annotated_path).exists() {
-                true
-            } else {
-                // Image wasn't saved earlier, create it now for posting
-                match image::open(&msg.image_path) {
-                    Ok(image) => {
-                        if let Err(e) = std::fs::create_dir_all(&CONFIG.output.output_file_folder) {
-                            warn!("Failed to create output directory: {}", e);
-                            false
-                        } else {
-                            match draw_boxes_on_provided_image(image, &msg.detections) {
-                                Ok(annotated_image) => {
-                                    if let Err(e) = annotated_image.save(&annotated_path) {
-                                        warn!("Failed to save annotated image for posting: {}", e);
-                                        false
-                                    } else {
-                                        info!("Created annotated image for posting: {}", annotated_path);
-                                        true
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Failed to draw bounding boxes for posting: {}", e);
-                                    false
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to open source image for posting: {}", e);
-                        false
-                    }
+            // If we didn't save earlier, save now for posting
+            if !should_save {
+                if let Err(e) = annotated_image.save(&annotated_path) {
+                    warn!("Failed to save annotated image for posting: {}", e);
+                    return;
                 }
-            };
-
-            if !image_ready {
-                warn!("Skipping post: could not prepare annotated image");
-                return;
+                info!("Created annotated image for posting: {}", annotated_path);
             }
 
             // Use configured message or fallback to default
@@ -362,6 +360,75 @@ impl Handler<DetectionCompleted> for OutputActor {
             }
             if let Some(ref kafka) = self.kafka_actor {
                 kafka.do_send(service_post);
+            }
+        }
+    }
+}
+
+impl Handler<ActorRestarted> for OutputActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: ActorRestarted, _ctx: &mut Self::Context) -> Self::Result {
+        info!(
+            "OutputActor received restart notification for actor: {}",
+            msg.actor_name
+        );
+
+        // Try to downcast and update the appropriate actor address
+        match msg.actor_name.as_str() {
+            "TwitterActor" => {
+                if let Some(addr) = msg
+                    .new_address
+                    .downcast_ref::<Addr<TwitterActor>>()
+                    .cloned()
+                {
+                    info!("Updated TwitterActor address after restart");
+                    self.twitter_actor = Some(addr);
+                } else {
+                    warn!("Failed to downcast new TwitterActor address");
+                }
+            }
+            "BlueskyActor" => {
+                if let Some(addr) = msg
+                    .new_address
+                    .downcast_ref::<Addr<BlueskyActor>>()
+                    .cloned()
+                {
+                    info!("Updated BlueskyActor address after restart");
+                    self.bluesky_actor = Some(addr);
+                } else {
+                    warn!("Failed to downcast new BlueskyActor address");
+                }
+            }
+            "MastodonActor" => {
+                if let Some(addr) = msg
+                    .new_address
+                    .downcast_ref::<Addr<MastodonActor>>()
+                    .cloned()
+                {
+                    info!("Updated MastodonActor address after restart");
+                    self.mastodon_actor = Some(addr);
+                } else {
+                    warn!("Failed to downcast new MastodonActor address");
+                }
+            }
+            "KafkaActor" => {
+                if let Some(addr) = msg
+                    .new_address
+                    .downcast_ref::<Addr<KafkaActor>>()
+                    .cloned()
+                {
+                    info!("Updated KafkaActor address after restart");
+                    self.kafka_actor = Some(addr);
+                } else {
+                    warn!("Failed to downcast new KafkaActor address");
+                }
+            }
+            _ => {
+                debug!(
+                    "OutputActor ignoring restart notification for unrelated actor: {}",
+                    msg.actor_name
+                );
             }
         }
     }

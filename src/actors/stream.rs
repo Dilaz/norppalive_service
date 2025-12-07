@@ -183,6 +183,201 @@ impl StreamActor {
         }
     }
 
+    /// Sends initialization status via the oneshot channel
+    fn send_init_status(
+        sender: Option<oneshot::Sender<Result<(), NorppaliveError>>>,
+        result: &Result<(), NorppaliveError>,
+    ) {
+        if let Some(s) = sender {
+            let status = result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|err| err.clone_for_error_reporting());
+            if let Err(e) = s.send(status) {
+                error!(target: "stream", "Failed to send init status: {:?}. Receiver likely dropped.", e);
+            }
+        }
+    }
+
+    /// Initialize FFmpeg and open the stream, returning decoder and scaler
+    fn init_ffmpeg_stream(
+        stream_url: String,
+        init_sender: &mut Option<oneshot::Sender<Result<(), NorppaliveError>>>,
+    ) -> Result<
+        (
+            ffmpeg::format::context::Input,
+            ffmpeg::decoder::Video,
+            ScalingContext,
+            usize,
+        ),
+        NorppaliveError,
+    > {
+        if let Err(e) = ffmpeg::init() {
+            error!(target: "stream", "FFmpeg init failed: {}", e);
+            let err = NorppaliveError::from(e);
+            Self::send_init_status(init_sender.take(), &Err(err.clone_for_error_reporting()));
+            return Err(err);
+        }
+        ffmpeg::log::set_level(ffmpeg::log::Level::Quiet);
+
+        // Resolve the actual stream URL (may need yt-dlp for YouTube URLs)
+        let actual_url = if stream_url.starts_with("https://") {
+            match Self::get_stream_url(&stream_url) {
+                Ok(url) => url,
+                Err(e) => {
+                    error!(target: "stream", "Failed to get stream URL: {}", e);
+                    Self::send_init_status(init_sender.take(), &Err(e.clone_for_error_reporting()));
+                    return Err(e);
+                }
+            }
+        } else {
+            stream_url
+        };
+
+        info!(target: "stream", "Attempting to open FFmpeg input for URL: {}", actual_url);
+        let ictx = match input(&actual_url) {
+            Ok(ctx) => {
+                info!(target: "stream", "Successfully opened FFmpeg input for: {}", actual_url);
+                Self::send_init_status(init_sender.take(), &Ok(()));
+                ctx
+            }
+            Err(e) => {
+                error!(target: "stream", "Failed to open FFmpeg input for {}: {}", actual_url, e);
+                let err = NorppaliveError::from(e);
+                Self::send_init_status(init_sender.take(), &Err(err.clone_for_error_reporting()));
+                return Err(err);
+            }
+        };
+
+        let input_stream = ictx.streams().best(Type::Video).ok_or_else(|| {
+            error!(target: "stream", "Could not find video stream in {}", actual_url);
+            NorppaliveError::Other(format!("Could not find video stream in {}", actual_url))
+        })?;
+
+        let video_stream_index = input_stream.index();
+
+        let mut decoder = CodecContext::from_parameters(input_stream.parameters())
+            .and_then(|context| context.decoder().video())
+            .map_err(|e| {
+                error!(target: "stream", "Failed to create video decoder: {}", e);
+                NorppaliveError::from(e)
+            })?;
+
+        if CONFIG.stream.only_keyframes {
+            decoder.skip_frame(Discard::NonKey);
+        }
+
+        let scaler = ScalingContext::get(
+            decoder.format(),
+            decoder.width(),
+            decoder.height(),
+            Pixel::RGB24,
+            decoder.width(),
+            decoder.height(),
+            Flags::BILINEAR,
+        )
+        .map_err(|e| {
+            error!(target: "stream", "Failed to create scaler: {}", e);
+            NorppaliveError::from(e)
+        })?;
+
+        Ok((ictx, decoder, scaler, video_stream_index))
+    }
+
+    /// Process a single decoded frame: scale it and send to the stream actor
+    fn process_decoded_frame(
+        decoded: &Video,
+        scaler: &mut ScalingContext,
+        frame_index: u64,
+        stream_actor_addr: &Addr<StreamActor>,
+        shutdown_signal: &Arc<AtomicBool>,
+    ) -> Result<(), u32> {
+        // Record start time for minimum processing interval
+        let frame_start_time = std::time::Instant::now();
+
+        let mut rgb_frame = Video::empty();
+        match scaler.run(decoded, &mut rgb_frame) {
+            Ok(_) => {
+                // Check shutdown signal before sending frame
+                if shutdown_signal.load(Ordering::Relaxed) {
+                    info!(target: "stream", "Shutdown signal received before sending frame {}, stopping", frame_index);
+                    return Err(0); // Signal to stop, not an error count increment
+                }
+
+                // Create and send LatestFrameAvailable to StreamActor
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+
+                let frame_msg = LatestFrameAvailable {
+                    frame_data: rgb_frame.data(0).to_vec(),
+                    width: rgb_frame.width(),
+                    height: rgb_frame.height(),
+                    timestamp,
+                    frame_index,
+                };
+                stream_actor_addr.do_send(frame_msg);
+
+                // Ensure minimum processing interval
+                let processing_time = frame_start_time.elapsed();
+                let min_interval = Duration::from_millis(CONFIG.stream.frame_processing_delay_ms);
+
+                if processing_time < min_interval {
+                    let remaining_delay = min_interval - processing_time;
+                    debug!(target: "stream",
+                        "Frame {} processed in {:.2}ms, sleeping for {:.2}ms to reach minimum interval of {}ms",
+                        frame_index,
+                        processing_time.as_millis(),
+                        remaining_delay.as_millis(),
+                        min_interval.as_millis()
+                    );
+                    std::thread::sleep(remaining_delay);
+                } else {
+                    debug!(target: "stream",
+                        "Frame {} took {:.2}ms to process (>= {}ms minimum), no additional delay needed",
+                        frame_index,
+                        processing_time.as_millis(),
+                        min_interval.as_millis()
+                    );
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                error!(target: "stream", "Failed to scale frame {}: {}", frame_index, e);
+                Err(1) // Increment error count
+            }
+        }
+    }
+
+    /// Check if the stream processing loop should stop
+    fn should_stop_processing(
+        shutdown_signal: &Arc<AtomicBool>,
+        error_count: u32,
+        max_errors: u32,
+        start_time: std::time::Instant,
+        max_runtime: Duration,
+        frame_index: u64,
+        max_frames: Option<u64>,
+    ) -> Option<&'static str> {
+        if shutdown_signal.load(Ordering::Relaxed) {
+            return Some("Shutdown signal received");
+        }
+        if error_count >= max_errors {
+            return Some("Too many errors");
+        }
+        if start_time.elapsed() > max_runtime {
+            return Some("Maximum runtime reached");
+        }
+        if let Some(max) = max_frames {
+            if frame_index >= max {
+                return Some("Maximum frame count reached");
+            }
+        }
+        None
+    }
+
     /// Main FFmpeg processing function
     fn process_stream_blocking(
         stream_url: String,
@@ -192,148 +387,36 @@ impl StreamActor {
     ) -> Result<(), NorppaliveError> {
         info!(target: "stream", "process_stream_blocking started. Initializing FFmpeg and stream input.");
 
-        // Helper to send init signal and consume the sender
         let mut init_sender = init_signal;
-        let send_init_status =
-            |sender: Option<oneshot::Sender<Result<(), NorppaliveError>>>,
-             result: Result<(), NorppaliveError>| {
-                if let Some(s) = sender {
-                    if let Err(e) = s.send(
-                        result
-                            .as_ref()
-                            .map(|_| ())
-                            .map_err(|err| err.clone_for_error_reporting()),
-                    ) {
-                        error!(target: "stream", "Failed to send init status: {:?}. Receiver likely dropped.", e);
-                    }
-                }
-            };
-
-        if let Err(e) = ffmpeg::init() {
-            error!(target: "stream", "FFmpeg init failed: {}", e);
-            let err = NorppaliveError::from(e);
-            send_init_status(init_sender.take(), Err(err.clone_for_error_reporting()));
-            return Err(err);
-        }
-        ffmpeg::log::set_level(ffmpeg::log::Level::Quiet);
-
-        let actual_url_result = if stream_url.starts_with("https://") {
-            Self::get_stream_url(&stream_url)
-        } else {
-            Ok(stream_url)
-        };
-
-        let actual_url = match actual_url_result {
-            Ok(url) => url,
-            Err(e) => {
-                error!(target: "stream", "Failed to get stream URL: {}", e);
-                send_init_status(init_sender.take(), Err(e.clone_for_error_reporting()));
-                return Err(e);
-            }
-        };
-
-        info!(target: "stream", "Attempting to open FFmpeg input for URL: {}", actual_url);
-        let mut ictx = match input(&actual_url) {
-            Ok(ctx) => {
-                info!(target: "stream", "Successfully opened FFmpeg input for: {}", actual_url);
-                send_init_status(init_sender.take(), Ok(()));
-                ctx
-            }
-            Err(e) => {
-                error!(target: "stream", "Failed to open FFmpeg input for {}: {}", actual_url, e);
-                let err = NorppaliveError::from(e);
-                send_init_status(init_sender.take(), Err(err.clone_for_error_reporting()));
-                return Err(err);
-            }
-        };
-
-        let input_stream = match ictx.streams().best(Type::Video) {
-            Some(s) => s,
-            None => {
-                error!(target: "stream", "Could not find video stream in {}", actual_url);
-                return Err(NorppaliveError::Other(format!(
-                    "Could not find video stream in {}",
-                    actual_url
-                )));
-            }
-        };
-
-        let video_stream_index = input_stream.index();
-
-        let decoder_result = CodecContext::from_parameters(input_stream.parameters())
-            .and_then(|context| context.decoder().video());
-
-        let mut decoder = match decoder_result {
-            Ok(dec) => dec,
-            Err(e) => {
-                error!(target: "stream", "Failed to create video decoder: {}", e);
-                return Err(NorppaliveError::from(e));
-            }
-        };
-
-        if CONFIG.stream.only_keyframes {
-            decoder.skip_frame(Discard::NonKey);
-        }
-
-        let scaler_result = ScalingContext::get(
-            decoder.format(),
-            decoder.width(),
-            decoder.height(),
-            Pixel::RGB24,
-            decoder.width(),
-            decoder.height(),
-            Flags::BILINEAR,
-        );
-
-        let mut scaler = match scaler_result {
-            Ok(s) => s,
-            Err(e) => {
-                error!(target: "stream", "Failed to create scaler: {}", e);
-                return Err(NorppaliveError::from(e));
-            }
-        };
+        let (mut ictx, mut decoder, mut scaler, video_stream_index) =
+            Self::init_ffmpeg_stream(stream_url, &mut init_sender)?;
 
         let mut frame_index = 0u64;
         let mut error_count = 0u32;
-        let max_errors = MAX_STREAM_ERRORS;
         let start_time = std::time::Instant::now();
-        let max_runtime = MAX_STREAM_RUNTIME;
-        let max_frames: Option<u64> = CONFIG.stream.max_frames;
+        let max_frames = CONFIG.stream.max_frames;
         let mut last_running_check = std::time::Instant::now();
-        let running_check_interval = STREAM_RUNNING_CHECK_INTERVAL;
 
         info!(target: "stream", "Starting frame processing loop");
 
         // Process frames
         for (stream, packet) in ictx.packets() {
-            // Check shutdown signal first
-            if shutdown_signal.load(Ordering::Relaxed) {
-                info!(target: "stream", "Shutdown signal received, stopping stream processing");
-                break;
-            }
-
             // Check if we should stop processing
-            if error_count >= max_errors {
-                error!(target: "stream", "Too many errors ({}/{}), stopping stream processing", error_count, max_errors);
+            if let Some(reason) = Self::should_stop_processing(
+                &shutdown_signal,
+                error_count,
+                MAX_STREAM_ERRORS,
+                start_time,
+                MAX_STREAM_RUNTIME,
+                frame_index,
+                max_frames,
+            ) {
+                info!(target: "stream", "{}, stopping stream processing", reason);
                 break;
             }
 
-            // Check runtime limit for safety
-            if start_time.elapsed() > max_runtime {
-                info!(target: "stream", "Maximum runtime reached ({}s), stopping stream processing", max_runtime.as_secs());
-                break;
-            }
-
-            // Check frame limit if set
-            if let Some(max) = max_frames {
-                if frame_index >= max {
-                    info!(target: "stream", "Maximum frame count reached ({}), stopping stream processing", max);
-                    break;
-                }
-            }
-
-            // Periodically check if we should still be running
-            if last_running_check.elapsed() > running_check_interval {
+            // Periodic status check
+            if last_running_check.elapsed() > STREAM_RUNNING_CHECK_INTERVAL {
                 if shutdown_signal.load(Ordering::Relaxed) {
                     info!(target: "stream", "Shutdown signal received during periodic check, stopping stream processing");
                     break;
@@ -342,106 +425,64 @@ impl StreamActor {
                 debug!(target: "stream", "Stream still running, processed {} frames", frame_index);
             }
 
-            if stream.index() == video_stream_index {
-                match decoder.send_packet(&packet) {
-                    Ok(_) => {
-                        error_count = 0; // Reset error count on success
-                    }
-                    Err(e) => {
-                        error_count += 1;
-                        error!(target: "stream", "Failed to send packet to decoder (error {}/{}): {}", error_count, max_errors, e);
-                        if error_count >= max_errors {
-                            break;
-                        }
-                        continue;
-                    }
-                }
+            if stream.index() != video_stream_index {
+                continue;
+            }
 
-                let mut decoded = Video::empty();
-                while decoder.receive_frame(&mut decoded).is_ok() {
-                    // Check shutdown signal before processing each frame
-                    if shutdown_signal.load(Ordering::Relaxed) {
-                        info!(target: "stream", "Shutdown signal received during frame processing, stopping");
+            // Send packet to decoder
+            match decoder.send_packet(&packet) {
+                Ok(_) => error_count = 0,
+                Err(e) => {
+                    error_count += 1;
+                    error!(target: "stream", "Failed to send packet to decoder (error {}/{}): {}", error_count, MAX_STREAM_ERRORS, e);
+                    if error_count >= MAX_STREAM_ERRORS {
                         break;
                     }
-
-                    frame_index += 1;
-
-                    // Process every nth frame based on configuration
-                    let frame_skip = if CONFIG.stream.only_keyframes { 1 } else { 30 };
-                    if !frame_index.is_multiple_of(frame_skip) {
-                        continue;
-                    }
-
-                    // Process this frame
-                    info!(target: "stream", "Processing frame {}", frame_index);
-
-                    // Record start time for minimum processing interval
-                    let frame_start_time = std::time::Instant::now();
-
-                    let mut rgb_frame = Video::empty();
-                    match scaler.run(&decoded, &mut rgb_frame) {
-                        Ok(_) => {
-                            // Check shutdown signal again before sending frame
-                            if shutdown_signal.load(Ordering::Relaxed) {
-                                info!(target: "stream", "Shutdown signal received before sending frame {}, stopping", frame_index);
-                                break;
-                            }
-
-                            // Create and send LatestFrameAvailable to StreamActor
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs() as i64;
-
-                            let frame_msg = LatestFrameAvailable {
-                                frame_data: rgb_frame.data(0).to_vec(),
-                                width: rgb_frame.width(),
-                                height: rgb_frame.height(),
-                                timestamp,
-                                frame_index,
-                            };
-                            stream_actor_addr.do_send(frame_msg);
-
-                            // Ensure minimum processing interval
-                            let processing_time = frame_start_time.elapsed();
-                            let min_interval =
-                                Duration::from_millis(CONFIG.stream.frame_processing_delay_ms);
-
-                            if processing_time < min_interval {
-                                let remaining_delay = min_interval - processing_time;
-                                debug!(target: "stream",
-                                    "Frame {} processed in {:.2}ms, sleeping for {:.2}ms to reach minimum interval of {}ms",
-                                    frame_index,
-                                    processing_time.as_millis(),
-                                    remaining_delay.as_millis(),
-                                    min_interval.as_millis()
-                                );
-                                std::thread::sleep(remaining_delay);
-                            } else {
-                                debug!(target: "stream",
-                                    "Frame {} took {:.2}ms to process (>= {}ms minimum), no additional delay needed",
-                                    frame_index,
-                                    processing_time.as_millis(),
-                                    min_interval.as_millis()
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            error_count += 1;
-                            error!(target: "stream", "Failed to scale frame {} (error {}/{}): {}", frame_index, error_count, max_errors, e);
-                            if error_count >= max_errors {
-                                break;
-                            }
-                        }
-                    }
+                    continue;
                 }
+            }
 
-                // Check shutdown signal after frame processing
+            // Receive and process decoded frames
+            let mut decoded = Video::empty();
+            while decoder.receive_frame(&mut decoded).is_ok() {
                 if shutdown_signal.load(Ordering::Relaxed) {
-                    info!(target: "stream", "Shutdown signal received after frame processing, stopping stream");
+                    info!(target: "stream", "Shutdown signal received during frame processing, stopping");
                     break;
                 }
+
+                frame_index += 1;
+
+                // Process every nth frame based on configuration
+                let frame_skip = if CONFIG.stream.only_keyframes { 1 } else { 30 };
+                if !frame_index.is_multiple_of(frame_skip) {
+                    continue;
+                }
+
+                info!(target: "stream", "Processing frame {}", frame_index);
+
+                match Self::process_decoded_frame(
+                    &decoded,
+                    &mut scaler,
+                    frame_index,
+                    &stream_actor_addr,
+                    &shutdown_signal,
+                ) {
+                    Ok(()) => {}
+                    Err(0) => break, // Shutdown signal
+                    Err(inc) => {
+                        error_count += inc;
+                        if error_count >= MAX_STREAM_ERRORS {
+                            error!(target: "stream", "Too many errors ({}/{}), stopping stream processing", error_count, MAX_STREAM_ERRORS);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Check shutdown signal after frame processing
+            if shutdown_signal.load(Ordering::Relaxed) {
+                info!(target: "stream", "Shutdown signal received after frame processing, stopping stream");
+                break;
             }
         }
 
@@ -450,7 +491,7 @@ impl StreamActor {
             error!(target: "stream", "Failed to send EOF to decoder: {}", e);
         }
 
-        info!(target: "stream", "Stream processing completed after {} frames in {:.2} seconds.", 
+        info!(target: "stream", "Stream processing completed after {} frames in {:.2} seconds.",
               frame_index, start_time.elapsed().as_secs_f64());
 
         Ok(())

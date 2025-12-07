@@ -52,7 +52,7 @@ impl SocialMediaService for BlueskyService {
                 Err(e) => {
                     // agent_guard is dropped here implicitly
                     tracing::error!("Bluesky login failed: {:?}", e); // Use tracing::error
-                    return Err(NorppaliveError::AtriumCreateSessionError(e));
+                    return Err(e.into());
                 }
             }
             // If login was successful, agent_guard was dropped, *is_logged_in_guard is true.

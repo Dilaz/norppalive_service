@@ -243,7 +243,7 @@ impl DetectionService {
             }
             Err(e) => {
                 error!("Failed to get response text: {}", e);
-                return Err(NorppaliveError::ReqwestError(e));
+                return Err(e.into());
             }
         };
 
@@ -258,7 +258,7 @@ impl DetectionService {
             }
             Err(err) => {
                 error!("Failed to parse JSON response: {}", err);
-                return Err(NorppaliveError::JsonError(err));
+                return Err(err.into());
             }
         };
 
