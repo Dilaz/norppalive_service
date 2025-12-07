@@ -48,3 +48,10 @@ pub struct ActorRestarted {
     /// The new actor address as a boxed Any
     pub new_address: Arc<dyn Any + Send + Sync>,
 }
+
+/// Message to subscribe to actor restart notifications
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SubscribeToRestarts {
+    pub subscriber: Recipient<ActorRestarted>,
+}

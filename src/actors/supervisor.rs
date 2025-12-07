@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
 use crate::error::NorppaliveError;
-use crate::messages::supervisor::{ActorFactoryFn, ActorRestarted, RegisterActor, SystemShutdown};
+use crate::messages::supervisor::{
+    ActorFactoryFn, ActorRestarted, RegisterActor, SubscribeToRestarts, SystemShutdown,
+};
 use crate::messages::{
     ActorFailed, ActorHealth, GetSystemHealth, HealthCheck, RestartActor, ShutdownSystem,
     SystemHealth,
@@ -292,6 +294,15 @@ impl Handler<RegisterActor> for SupervisorActor {
 
     fn handle(&mut self, msg: RegisterActor, _ctx: &mut Self::Context) -> Self::Result {
         self.register_actor_with_factory(msg.name, msg.factory, None);
+    }
+}
+
+impl Handler<SubscribeToRestarts> for SupervisorActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SubscribeToRestarts, _ctx: &mut Self::Context) -> Self::Result {
+        info!("New subscriber registered for actor restart notifications");
+        self.restart_subscribers.push(msg.subscriber);
     }
 }
 

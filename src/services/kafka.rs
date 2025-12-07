@@ -59,7 +59,7 @@ impl SocialMediaService for KafkaService {
             .await
             .map_err(|(err, _)| {
                 info!("Kafka error details: {}", err);
-                NorppaliveError::KafkaError(err)
+                err
             })?;
 
         debug!("Message sent to Kafka: {:?}", res);
