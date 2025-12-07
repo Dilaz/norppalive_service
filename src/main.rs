@@ -117,7 +117,10 @@ fn main() -> Result<()> {
         }
         if bluesky_actor.is_some() {
             let bluesky_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(BlueskyActor::new(ServiceType::BlueskyService(BlueskyService::default())).start())
+                Arc::new(
+                    BlueskyActor::new(ServiceType::BlueskyService(BlueskyService::default()))
+                        .start(),
+                )
             });
             supervisor.do_send(RegisterActor::with_factory("BlueskyActor", bluesky_factory));
         }
@@ -125,11 +128,16 @@ fn main() -> Result<()> {
             let mastodon_factory: ActorFactoryFn = Arc::new(|| {
                 Arc::new(MastodonActor::new(ServiceType::MastodonService(MastodonService)).start())
             });
-            supervisor.do_send(RegisterActor::with_factory("MastodonActor", mastodon_factory));
+            supervisor.do_send(RegisterActor::with_factory(
+                "MastodonActor",
+                mastodon_factory,
+            ));
         }
         if kafka_actor.is_some() {
             let kafka_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(KafkaActor::new(ServiceType::KafkaService(KafkaService::default())).start())
+                Arc::new(
+                    KafkaActor::new(ServiceType::KafkaService(KafkaService::default())).start(),
+                )
             });
             supervisor.do_send(RegisterActor::with_factory("KafkaActor", kafka_factory));
         }

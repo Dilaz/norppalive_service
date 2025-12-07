@@ -2,6 +2,8 @@ use actix::prelude::*;
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::messages::GracefulStop;
+
 /// Message to tell the SupervisorActor to shut down the system.
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -19,6 +21,8 @@ pub struct RegisterActor {
     pub name: String,
     /// Optional factory function for restarting the actor
     pub factory: Option<ActorFactoryFn>,
+    /// Optional recipient for graceful stop messages
+    pub stop_recipient: Option<Recipient<GracefulStop>>,
 }
 
 impl RegisterActor {
@@ -27,6 +31,7 @@ impl RegisterActor {
         Self {
             name: name.into(),
             factory: None,
+            stop_recipient: None,
         }
     }
 
@@ -35,7 +40,14 @@ impl RegisterActor {
         Self {
             name: name.into(),
             factory: Some(factory),
+            stop_recipient: None,
         }
+    }
+
+    /// Add a stop recipient for graceful shutdown
+    pub fn with_stop_recipient(mut self, recipient: Recipient<GracefulStop>) -> Self {
+        self.stop_recipient = Some(recipient);
+        self
     }
 }
 

@@ -1,4 +1,5 @@
 use actix::prelude::*;
+use image::{DynamicImage, ImageBuffer, Rgb};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,8 +12,8 @@ use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 use crate::messages::supervisor::SystemShutdown;
 use crate::messages::{
-    DetectorReady, FrameExtracted, InternalProcessingComplete, LatestFrameAvailable, ProcessFrame,
-    StartStream, StopStream,
+    DetectorReady, FrameExtracted, GracefulStop, InternalProcessingComplete, LatestFrameAvailable,
+    ProcessFrame, StartStream, StopStream,
 };
 
 // Production FFmpeg imports
@@ -145,7 +146,14 @@ impl StreamActor {
         }
 
         let output_result = Command::new("yt-dlp")
-            .args(["-f", "232", "-g", stream_url])
+            .args([
+                "-f",
+                "bestvideo[height<=720]",
+                "--js-runtime",
+                "bun",
+                "-g",
+                stream_url,
+            ])
             .output();
 
         match output_result {
@@ -504,23 +512,40 @@ impl StreamActor {
                 if let Some(ref det_actor) = self.detection_actor {
                     let image_path = CONFIG.image_filename.clone();
 
-                    match image::save_buffer(
-                        &image_path,
-                        &frame_details.frame_data,
+                    // Create DynamicImage from raw frame data
+                    let rgb_image: Option<ImageBuffer<Rgb<u8>, Vec<u8>>> = ImageBuffer::from_raw(
                         frame_details.width,
                         frame_details.height,
-                        image::ExtendedColorType::Rgb8,
-                    ) {
+                        frame_details.frame_data.clone(),
+                    );
+
+                    let Some(rgb_image) = rgb_image else {
+                        error!(
+                            "Failed to create image buffer from frame {} data. Frame dropped.",
+                            frame_details.frame_index
+                        );
+                        return;
+                    };
+
+                    let dynamic_image = DynamicImage::ImageRgb8(rgb_image);
+
+                    // Save to disk for detection API (which needs file path)
+                    match dynamic_image.save(&image_path) {
                         Ok(_) => {
                             info!(target: "stream", "Saved latest frame {} for detection to {}", frame_details.frame_index, &image_path);
+
+                            // Wrap image in Arc for efficient sharing
+                            let image_data = Arc::new(dynamic_image);
+
                             det_actor.do_send(ProcessFrame {
+                                image_data,
                                 image_path,
                                 timestamp: frame_details.timestamp,
                                 reply_to: ctx.address(),
                             });
                             self.detector_ready = false;
                             debug!(
-                                "Sent frame {} to detector. Detector is now busy.",
+                                "Sent frame {} to detector with in-memory image. Detector is now busy.",
                                 frame_details.frame_index
                             );
                         }
@@ -764,6 +789,38 @@ impl Handler<InternalProcessingComplete> for StreamActor {
         } else {
             info!(target: "stream", "Stream source exhausted or task completed. Checking if all frames are processed before shutdown.");
             self.check_and_initiate_shutdown_if_all_done(ctx);
+        }
+    }
+}
+
+impl Handler<GracefulStop> for StreamActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: GracefulStop, ctx: &mut Context<Self>) -> Self::Result {
+        info!(target: "stream", "StreamActor: Received GracefulStop message. Stopping stream processing.");
+
+        // Signal shutdown to stream processing task
+        if let Some(signal) = &self.shutdown_signal {
+            signal.store(true, Ordering::Relaxed);
+            info!(target: "stream", "StreamActor: Shutdown signal sent to stream processing task");
+        }
+
+        // Abort the processing task if it's still running
+        if let Some(task_handle) = self.processing_task_handle.take() {
+            info!(target: "stream", "StreamActor: Aborting stream processing task");
+            task_handle.abort();
+        }
+
+        self.running = false;
+        self.is_processing_task_running = false;
+
+        // Stop the actor
+        ctx.stop();
+
+        // Send acknowledgment
+        if let Some(ack_sender) = msg.ack_sender {
+            let _ = ack_sender.send(());
+            info!(target: "stream", "StreamActor: Sent shutdown acknowledgment");
         }
     }
 }

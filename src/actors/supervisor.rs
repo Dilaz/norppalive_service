@@ -4,6 +4,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
 use crate::error::NorppaliveError;
@@ -11,9 +12,12 @@ use crate::messages::supervisor::{
     ActorFactoryFn, ActorRestarted, RegisterActor, SubscribeToRestarts, SystemShutdown,
 };
 use crate::messages::{
-    ActorFailed, ActorHealth, GetSystemHealth, HealthCheck, RestartActor, ShutdownSystem,
-    SystemHealth,
+    ActorFailed, ActorHealth, GetSystemHealth, GracefulStop, HealthCheck, RestartActor,
+    ShutdownSystem, SystemHealth,
 };
+
+/// Timeout for graceful shutdown of individual actors
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Information about a managed actor including health and optional factory
 struct ManagedActorInfo {
@@ -22,6 +26,8 @@ struct ManagedActorInfo {
     factory: Option<ActorFactoryFn>,
     /// The current actor address (type-erased)
     address: Option<Arc<dyn Any + Send + Sync>>,
+    /// Optional recipient for graceful stop messages
+    stop_recipient: Option<Recipient<GracefulStop>>,
 }
 
 /// SupervisorActor manages the health and lifecycle of other actors in the system
@@ -69,12 +75,13 @@ impl SupervisorActor {
         Self::default()
     }
 
-    /// Register a new actor for health monitoring with optional factory
+    /// Register a new actor for health monitoring with optional factory and stop recipient
     pub fn register_actor_with_factory(
         &mut self,
         name: String,
         factory: Option<ActorFactoryFn>,
         address: Option<Arc<dyn Any + Send + Sync>>,
+        stop_recipient: Option<Recipient<GracefulStop>>,
     ) {
         let health = ActorHealth {
             name: name.clone(),
@@ -88,6 +95,7 @@ impl SupervisorActor {
             health,
             factory,
             address,
+            stop_recipient,
         };
         self.managed_actors.insert(name.clone(), info);
         let has_factory = self
@@ -95,15 +103,20 @@ impl SupervisorActor {
             .get(&name)
             .map(|i| i.factory.is_some())
             .unwrap_or(false);
+        let has_stop = self
+            .managed_actors
+            .get(&name)
+            .map(|i| i.stop_recipient.is_some())
+            .unwrap_or(false);
         info!(
-            "Registered actor '{}' for monitoring (restart capable: {})",
-            name, has_factory
+            "Registered actor '{}' for monitoring (restart capable: {}, graceful stop: {})",
+            name, has_factory, has_stop
         );
     }
 
     /// Legacy method for backwards compatibility
     pub fn register_actor(&mut self, name: String) {
-        self.register_actor_with_factory(name, None, None);
+        self.register_actor_with_factory(name, None, None, None);
     }
 
     /// Subscribe to restart notifications
@@ -143,11 +156,7 @@ impl SupervisorActor {
 
     /// Check if the system is overall healthy
     fn is_system_healthy(&self) -> bool {
-        !self.shutdown_requested
-            && self
-                .managed_actors
-                .values()
-                .all(|info| info.health.healthy)
+        !self.shutdown_requested && self.managed_actors.values().all(|info| info.health.healthy)
     }
 
     /// Get a map of actor health statuses (for GetSystemHealth response)
@@ -160,9 +169,10 @@ impl SupervisorActor {
 
     /// Attempt to restart an actor using its factory
     fn restart_actor_internal(&mut self, actor_name: &str) -> Result<(), NorppaliveError> {
-        let info = self.managed_actors.get_mut(actor_name).ok_or_else(|| {
-            NorppaliveError::Other(format!("Unknown actor: {}", actor_name))
-        })?;
+        let info = self
+            .managed_actors
+            .get_mut(actor_name)
+            .ok_or_else(|| NorppaliveError::Other(format!("Unknown actor: {}", actor_name)))?;
 
         let factory = info.factory.as_ref().ok_or_else(|| {
             NorppaliveError::Other(format!(
@@ -217,7 +227,10 @@ impl Handler<ActorFailed> for SupervisorActor {
                 );
                 match self.restart_actor_internal(&msg.actor_name) {
                     Ok(()) => {
-                        info!("Actor '{}' automatically restarted after failure", msg.actor_name);
+                        info!(
+                            "Actor '{}' automatically restarted after failure",
+                            msg.actor_name
+                        );
                     }
                     Err(e) => {
                         error!(
@@ -262,17 +275,15 @@ impl Handler<GetSystemHealth> for SupervisorActor {
 }
 
 impl Handler<ShutdownSystem> for SupervisorActor {
-    type Result = Result<(), NorppaliveError>;
+    type Result = ResponseActFuture<Self, Result<(), NorppaliveError>>;
 
     fn handle(&mut self, _msg: ShutdownSystem, ctx: &mut Self::Context) -> Self::Result {
-        info!("System shutdown requested");
-        self.shutdown_requested = true;
+        info!("System shutdown requested via ShutdownSystem message");
 
-        // Stop the actor system
-        ctx.stop();
-        System::current().stop();
+        // Delegate to SystemShutdown handler for consistent graceful shutdown
+        ctx.address().do_send(SystemShutdown);
 
-        Ok(())
+        Box::pin(async { Ok(()) }.into_actor(self))
     }
 }
 
@@ -293,7 +304,7 @@ impl Handler<RegisterActor> for SupervisorActor {
     type Result = ();
 
     fn handle(&mut self, msg: RegisterActor, _ctx: &mut Self::Context) -> Self::Result {
-        self.register_actor_with_factory(msg.name, msg.factory, None);
+        self.register_actor_with_factory(msg.name, msg.factory, None, msg.stop_recipient);
     }
 }
 
@@ -307,21 +318,84 @@ impl Handler<SubscribeToRestarts> for SupervisorActor {
 }
 
 impl Handler<SystemShutdown> for SupervisorActor {
-    type Result = ();
+    type Result = ResponseActFuture<Self, ()>;
 
-    fn handle(&mut self, _msg: SystemShutdown, ctx: &mut Context<Self>) -> Self::Result {
-        info!("SupervisorActor: Received SystemShutdown message. Initiating shutdown sequence.");
+    fn handle(&mut self, _msg: SystemShutdown, _ctx: &mut Context<Self>) -> Self::Result {
+        info!("SupervisorActor: Received SystemShutdown message. Initiating graceful shutdown sequence.");
 
-        // Schedule immediate shutdown
-        info!("SupervisorActor: Stopping Actix system.");
-        ctx.run_later(std::time::Duration::from_millis(100), |_actor, _ctx| {
-            actix::System::current().stop();
-        });
+        self.shutdown_requested = true;
 
-        // Log if graceful shutdown takes too long (but don't force exit to allow proper cleanup)
-        ctx.run_later(std::time::Duration::from_secs(5), |_actor, _ctx| {
-            warn!("SupervisorActor: Graceful shutdown taking longer than 5 seconds. Waiting for cleanup to complete...");
-        });
+        // Collect all actors that have stop recipients
+        let actors_to_stop: Vec<(String, Recipient<GracefulStop>)> = self
+            .managed_actors
+            .iter()
+            .filter_map(|(name, info)| {
+                info.stop_recipient
+                    .clone()
+                    .map(|recipient| (name.clone(), recipient))
+            })
+            .collect();
+
+        let actor_count = actors_to_stop.len();
+        info!(
+            "SupervisorActor: Sending GracefulStop to {} managed actors",
+            actor_count
+        );
+
+        Box::pin(
+            async move {
+                // Send GracefulStop to all actors and wait for acknowledgments
+                let mut ack_receivers = Vec::new();
+
+                for (name, recipient) in actors_to_stop {
+                    let (tx, rx) = oneshot::channel();
+                    info!("SupervisorActor: Sending GracefulStop to '{}'", name);
+
+                    if let Err(e) = recipient.try_send(GracefulStop {
+                        ack_sender: Some(tx),
+                    }) {
+                        warn!(
+                            "SupervisorActor: Failed to send GracefulStop to '{}': {}",
+                            name, e
+                        );
+                        continue;
+                    }
+
+                    ack_receivers.push((name, rx));
+                }
+
+                // Wait for all acknowledgments with timeout
+                for (name, rx) in ack_receivers {
+                    match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, rx).await {
+                        Ok(Ok(())) => {
+                            info!("SupervisorActor: Actor '{}' acknowledged shutdown", name);
+                        }
+                        Ok(Err(_)) => {
+                            warn!(
+                                "SupervisorActor: Actor '{}' shutdown acknowledgment channel closed",
+                                name
+                            );
+                        }
+                        Err(_) => {
+                            warn!(
+                                "SupervisorActor: Timeout waiting for '{}' to acknowledge shutdown",
+                                name
+                            );
+                        }
+                    }
+                }
+
+                info!("SupervisorActor: All actors processed. Stopping system.");
+            }
+            .into_actor(self)
+            .map(|_, _actor, ctx| {
+                // Stop the Actix system after all actors have been processed
+                ctx.run_later(Duration::from_millis(100), |_actor, _ctx| {
+                    info!("SupervisorActor: Stopping Actix system now.");
+                    actix::System::current().stop();
+                });
+            }),
+        )
     }
 }
 
@@ -474,10 +548,7 @@ mod tests {
             .unwrap();
 
         // Factory should have been called for restart
-        assert_eq!(
-            restart_count.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
+        assert_eq!(restart_count.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         // Check health - actor should be healthy again after restart
         let health = supervisor.send(GetSystemHealth).await.unwrap().unwrap();

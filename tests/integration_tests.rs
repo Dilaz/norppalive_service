@@ -4,10 +4,15 @@ use norppalive_service::actors::*;
 use norppalive_service::messages::*;
 use norppalive_service::utils::detection_utils::DetectionResult;
 use norppalive_service::utils::output::MockOutputService;
+use std::sync::Arc;
 
 // Test helper functions
 fn create_test_image() -> DynamicImage {
     image::DynamicImage::new_rgb8(100, 100)
+}
+
+fn create_test_image_arc() -> Arc<DynamicImage> {
+    Arc::new(create_test_image())
 }
 
 fn create_test_detection() -> DetectionResult {
@@ -95,6 +100,7 @@ async fn test_stream_to_detection_flow() {
     let mock_stream_actor = StreamActor::new().start();
     let detection_result = detection_actor
         .send(ProcessFrame {
+            image_data: create_test_image_arc(),
             image_path: "/fake/test/image.jpg".to_string(),
             timestamp: 1234567890,
             reply_to: mock_stream_actor,
@@ -188,6 +194,7 @@ async fn test_actor_error_handling() {
     // Test detection with invalid input
     let result = detection_actor
         .send(ProcessFrame {
+            image_data: create_test_image_arc(),
             image_path: "/absolutely/nonexistent/path/to/image.jpg".to_string(),
             timestamp: 1234567890,
             reply_to: mock_stream_actor,

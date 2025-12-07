@@ -1,6 +1,7 @@
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tokio::sync::oneshot;
 
 /// Messages for SupervisorActor and system management
 
@@ -9,6 +10,15 @@ use std::collections::HashMap;
 pub struct ActorFailed {
     pub actor_name: String,
     pub error: String,
+}
+
+/// Message to request graceful shutdown of an actor.
+/// The actor should finish its current work and then respond.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct GracefulStop {
+    /// Channel to signal when the actor has finished cleanup
+    pub ack_sender: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Message)]
