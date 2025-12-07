@@ -1,5 +1,7 @@
 use actix::prelude::*;
+use image::DynamicImage;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::utils::detection_utils::DetectionResult;
 
@@ -8,6 +10,9 @@ use crate::utils::detection_utils::DetectionResult;
 #[derive(Message)]
 #[rtype(result = "Result<Vec<DetectionResult>, crate::error::NorppaliveError>")]
 pub struct ProcessFrame {
+    /// The image data in memory
+    pub image_data: Arc<DynamicImage>,
+    /// Path where the image was saved (for detection API that needs file path)
     pub image_path: String,
     pub timestamp: i64,
     pub reply_to: Addr<crate::actors::StreamActor>,
@@ -19,7 +24,8 @@ pub struct DetectionCompleted {
     pub detections: Vec<DetectionResult>,
     pub timestamp: i64,
     pub consecutive_detections: u32,
-    pub image_path: String,
+    /// The original image data in memory (avoids re-reading from disk)
+    pub image_data: Arc<DynamicImage>,
 }
 
 #[derive(Message)]

@@ -7,7 +7,7 @@ use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts};
 use crate::messages::{
-    DetectionCompleted, GetServiceStatus, PostToSocialMedia, SaveDetectionImage,
+    DetectionCompleted, GetServiceStatus, GracefulStop, PostToSocialMedia, SaveDetectionImage,
     SaveHeatmapVisualization, ServicePost, ServiceStatus,
 };
 use crate::utils::image_utils::draw_boxes_on_provided_image;
@@ -95,12 +95,7 @@ impl OutputActor {
         }
     }
 
-    fn should_post(
-        &self,
-        consecutive_detections: u32,
-        timestamp: i64,
-        max_confidence: u8,
-    ) -> bool {
+    fn should_post(&self, consecutive_detections: u32, timestamp: i64, max_confidence: u8) -> bool {
         let has_enough_detections =
             consecutive_detections >= CONFIG.detection.minimum_detection_frames;
         // post_interval is in minutes, timestamp is in seconds
@@ -263,7 +258,8 @@ impl Handler<DetectionCompleted> for OutputActor {
 
         // Determine if we need to save or post
         let should_save = self.should_save_image(msg.timestamp, max_confidence);
-        let should_post = self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence);
+        let should_post =
+            self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence);
 
         // Early return if we don't need to do anything
         if !should_save && !should_post {
@@ -271,7 +267,7 @@ impl Handler<DetectionCompleted> for OutputActor {
             return;
         }
 
-        // Generate annotated image once if needed for either operation
+        // Generate annotated image path
         let annotated_path = format!(
             "{}/detection-{}.jpg",
             CONFIG.output.output_file_folder, msg.timestamp
@@ -283,24 +279,16 @@ impl Handler<DetectionCompleted> for OutputActor {
             return;
         }
 
-        // Load and annotate the image once
-        let annotated_image = match image::open(&msg.image_path) {
-            Ok(image) => match draw_boxes_on_provided_image(image, &msg.detections) {
-                Ok(annotated) => Some(annotated),
-                Err(e) => {
-                    warn!("Failed to draw bounding boxes: {}", e);
-                    None
-                }
-            },
-            Err(e) => {
-                warn!("Failed to open image {}: {}", msg.image_path, e);
-                None
-            }
-        };
+        // Use the in-memory image directly instead of reading from disk
+        // Clone the Arc to get ownership for drawing
+        let image = (*msg.image_data).clone();
 
-        let Some(annotated_image) = annotated_image else {
-            warn!("Could not create annotated image, skipping save and post");
-            return;
+        let annotated_image = match draw_boxes_on_provided_image(image, &msg.detections) {
+            Ok(annotated) => annotated,
+            Err(e) => {
+                warn!("Failed to draw bounding boxes: {}", e);
+                return;
+            }
         };
 
         // Save the annotated image if conditions are met
@@ -413,11 +401,7 @@ impl Handler<ActorRestarted> for OutputActor {
                 }
             }
             "KafkaActor" => {
-                if let Some(addr) = msg
-                    .new_address
-                    .downcast_ref::<Addr<KafkaActor>>()
-                    .cloned()
-                {
+                if let Some(addr) = msg.new_address.downcast_ref::<Addr<KafkaActor>>().cloned() {
                     info!("Updated KafkaActor address after restart");
                     self.kafka_actor = Some(addr);
                 } else {
@@ -430,6 +414,23 @@ impl Handler<ActorRestarted> for OutputActor {
                     msg.actor_name
                 );
             }
+        }
+    }
+}
+
+impl Handler<GracefulStop> for OutputActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: GracefulStop, ctx: &mut Self::Context) -> Self::Result {
+        info!("OutputActor: Received GracefulStop message. Finishing current work.");
+
+        // Stop the actor
+        ctx.stop();
+
+        // Send acknowledgment
+        if let Some(ack_sender) = msg.ack_sender {
+            let _ = ack_sender.send(());
+            info!("OutputActor: Sent shutdown acknowledgment");
         }
     }
 }

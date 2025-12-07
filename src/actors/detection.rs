@@ -6,7 +6,8 @@ use tracing::{error, info};
 use crate::actors::OutputActor;
 use crate::error::NorppaliveError;
 use crate::messages::{
-    DetectionCompleted, DetectionStats, DetectorReady, GetDetectionStats, ProcessFrame,
+    DetectionCompleted, DetectionStats, DetectorReady, GetDetectionStats, GracefulStop,
+    ProcessFrame,
 };
 use crate::utils::detection_utils::{DetectionResult, DetectionService, DetectionServiceTrait};
 
@@ -99,7 +100,7 @@ impl Handler<ProcessFrame> for DetectionActor {
         info!("Processing frame: {}", msg.image_path);
 
         let image_path = msg.image_path.clone();
-        let image_path_for_output = msg.image_path.clone();
+        let image_data = msg.image_data.clone();
         let timestamp = msg.timestamp;
         let reply_to_addr = msg.reply_to.clone();
         let detection_service = self.detection_service.clone();
@@ -108,6 +109,7 @@ impl Handler<ProcessFrame> for DetectionActor {
         Box::pin(
             async move {
                 let mut service_instance = detection_service.lock().await;
+                // Detection API still uses file path (external service)
                 let detection_result = service_instance.do_detection(&image_path).await;
 
                 // Update temperature map with detections
@@ -136,13 +138,14 @@ impl Handler<ProcessFrame> for DetectionActor {
                 reply_to_addr.do_send(DetectorReady);
 
                 // Send DetectionCompleted to OutputActor with FILTERED detections only
+                // Pass through the in-memory image to avoid re-reading from disk
                 if !filtered_detections.is_empty() {
                     if let Some(ref output) = output_actor {
                         output.do_send(DetectionCompleted {
                             detections: filtered_detections,
                             timestamp,
                             consecutive_detections: actor.consecutive_detections,
-                            image_path: image_path_for_output,
+                            image_data,
                         });
                     }
                 }
@@ -187,10 +190,28 @@ impl Handler<GetDetectionStats> for DetectionActor {
     }
 }
 
+impl Handler<GracefulStop> for DetectionActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: GracefulStop, ctx: &mut Self::Context) -> Self::Result {
+        info!("DetectionActor: Received GracefulStop message. Finishing current work.");
+
+        // Stop the actor
+        ctx.stop();
+
+        // Send acknowledgment
+        if let Some(ack_sender) = msg.ack_sender {
+            let _ = ack_sender.send(());
+            info!("DetectionActor: Sent shutdown acknowledgment");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::actors::StreamActor;
+    use image::{DynamicImage, RgbImage};
     use std::fs;
     use std::io::Write;
     use tempfile;
@@ -202,6 +223,10 @@ mod tests {
             cls_name: "seal".to_string(),
             conf: 85,
         }
+    }
+
+    fn create_test_image() -> Arc<DynamicImage> {
+        Arc::new(DynamicImage::ImageRgb8(RgbImage::new(100, 100)))
     }
 
     #[actix::test]
@@ -252,6 +277,7 @@ mod tests {
 
         let result = actor
             .send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: "/nonexistent/path/image.jpg".to_string(),
                 timestamp: 1234567890,
                 reply_to: mock_stream_actor_addr.clone(),
@@ -283,6 +309,7 @@ mod tests {
 
         let result = actor
             .send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: image_path.to_string_lossy().to_string(),
                 timestamp: 100,
                 reply_to: mock_stream_actor_addr.clone(),
@@ -312,6 +339,7 @@ mod tests {
 
         let _ = actor
             .send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: image_path_no_detection.to_string_lossy().to_string(),
                 timestamp: 200,
                 reply_to: mock_stream_actor_addr.clone(),
@@ -339,6 +367,7 @@ mod tests {
 
         let result = actor
             .send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: image_path.to_string_lossy().to_string(),
                 timestamp: 1234567890,
                 reply_to: mock_stream_actor_addr.clone(),
@@ -379,16 +408,19 @@ mod tests {
 
         let results = futures::future::join_all(vec![
             actor.send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: "/fake/path1.jpg".to_string(),
                 timestamp: 1000,
                 reply_to: mock_stream_actor_addr.clone(),
             }),
             actor.send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: "/fake/path2.jpg".to_string(),
                 timestamp: 2000,
                 reply_to: mock_stream_actor_addr.clone(),
             }),
             actor.send(ProcessFrame {
+                image_data: create_test_image(),
                 image_path: "/fake/path3.jpg".to_string(),
                 timestamp: 3000,
                 reply_to: mock_stream_actor_addr.clone(),
