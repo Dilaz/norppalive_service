@@ -22,7 +22,7 @@ The service uses an **Actix actor-based architecture** for robust, fault-toleran
 ```mermaid
 graph TB
     %% Core Actors
-    Supervisor[SupervisorActor<br/>• Health monitoring<br/>• Actor restarts<br/>• System status]
+    Supervisor[SupervisorActor<br/>• Health monitoring<br/>• Factory-based restarts<br/>• System status]
     Stream[StreamActor<br/>• FFmpeg processing<br/>• Frame extraction<br/>• Stream management]
     Detection[DetectionActor<br/>• Image analysis<br/>• Temperature mapping<br/>• Statistics tracking]
     Output[OutputActor<br/>• Coordinates posting<br/>• Image saving<br/>• Heatmap visualization]
@@ -75,9 +75,9 @@ graph TB
 
 ### Key Features
 
-- **Fault Tolerance**: Individual service failures don't crash the system
+- **Fault Tolerance**: Individual service failures don't crash the system; actors with registered factories are automatically restarted on failure
 - **Rate Limiting**: Built-in social media rate limiting with automatic recovery
-- **Health Monitoring**: Comprehensive actor health tracking and automatic restarts
+- **Health Monitoring**: Comprehensive actor health tracking with optional factory-based automatic restarts
 - **Scalability**: Easy to add new social media services as actors
 - **Clean Separation**: Each component has clear responsibilities
 - **Future-Ready**: Message bus abstraction allows external service integration
@@ -155,7 +155,7 @@ src/
 ├── lib.rs                      # Library exports for external binaries
 ├── actors/                     # Actor implementations
 │   ├── mod.rs                  # Actor module exports
-│   ├── supervisor.rs           # SupervisorActor - health monitoring & restarts
+│   ├── supervisor.rs           # SupervisorActor - health monitoring & factory-based restarts
 │   ├── stream.rs               # StreamActor - video processing & frame extraction
 │   ├── detection.rs            # DetectionActor - AI detection & analysis
 │   ├── output.rs               # OutputActor - coordinates posting & saving
