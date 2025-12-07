@@ -88,8 +88,9 @@ impl OutputActor {
     ) -> bool {
         let has_enough_detections =
             consecutive_detections >= CONFIG.detection.minimum_detection_frames;
+        // post_interval is in minutes, timestamp is in seconds
         let enough_time_passed =
-            timestamp - self.last_post_time >= CONFIG.output.post_interval;
+            timestamp - self.last_post_time >= CONFIG.output.post_interval * 60;
         let confidence_high_enough = max_confidence >= CONFIG.detection.minimum_post_confidence;
 
         if has_enough_detections && enough_time_passed && !confidence_high_enough {
@@ -102,8 +103,14 @@ impl OutputActor {
         has_enough_detections && enough_time_passed && confidence_high_enough
     }
 
-    fn should_save_image(&self, timestamp: i64) -> bool {
-        timestamp - self.last_save_time >= CONFIG.output.image_save_interval
+    fn should_save_image(&self, timestamp: i64, max_confidence: u8) -> bool {
+        // image_save_interval is in minutes, timestamp is in seconds
+        let enough_time_passed =
+            timestamp - self.last_save_time >= CONFIG.output.image_save_interval * 60;
+        // Only save if confidence meets the save_image_confidence threshold
+        let confidence_high_enough = max_confidence >= CONFIG.detection.save_image_confidence;
+
+        enough_time_passed && confidence_high_enough
     }
 }
 
@@ -239,8 +246,8 @@ impl Handler<DetectionCompleted> for OutputActor {
             return;
         }
 
-        // Check if we should save the image
-        if self.should_save_image(msg.timestamp) {
+        // Check if we should save the image (considers interval and confidence threshold)
+        if self.should_save_image(msg.timestamp, max_confidence) {
             self.last_save_time = msg.timestamp;
 
             // Load image and draw bounding boxes
@@ -285,10 +292,57 @@ impl Handler<DetectionCompleted> for OutputActor {
                 CONFIG.output.output_file_folder, msg.timestamp
             );
 
-            let message = format!(
-                "Saimaa ringed seal detected! {} seal(s) spotted. #Norppalive #SaimaaRingedSeal",
-                detection_count
-            );
+            // Ensure the annotated image exists before posting
+            let image_ready = if std::path::Path::new(&annotated_path).exists() {
+                true
+            } else {
+                // Image wasn't saved earlier, create it now for posting
+                match image::open(&msg.image_path) {
+                    Ok(image) => {
+                        if let Err(e) = std::fs::create_dir_all(&CONFIG.output.output_file_folder) {
+                            warn!("Failed to create output directory: {}", e);
+                            false
+                        } else {
+                            match draw_boxes_on_provided_image(image, &msg.detections) {
+                                Ok(annotated_image) => {
+                                    if let Err(e) = annotated_image.save(&annotated_path) {
+                                        warn!("Failed to save annotated image for posting: {}", e);
+                                        false
+                                    } else {
+                                        info!("Created annotated image for posting: {}", annotated_path);
+                                        true
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to draw bounding boxes for posting: {}", e);
+                                    false
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to open source image for posting: {}", e);
+                        false
+                    }
+                }
+            };
+
+            if !image_ready {
+                warn!("Skipping post: could not prepare annotated image");
+                return;
+            }
+
+            // Use configured message or fallback to default
+            let message = CONFIG
+                .output
+                .get_random_message()
+                .cloned()
+                .unwrap_or_else(|| {
+                    format!(
+                        "Saimaa ringed seal detected! {} seal(s) spotted. #Norppalive #SaimaaRingedSeal",
+                        detection_count
+                    )
+                });
 
             // Send to all connected service actors
             let service_post = ServicePost {
