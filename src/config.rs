@@ -8,11 +8,78 @@ lazy_static! {
         let config_path =
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
 
-        let config_content = std::fs::read_to_string(&config_path)
-            .unwrap_or_else(|_| panic!("Failed to read config file: {}", config_path));
-        toml::from_str(&config_content)
-            .unwrap_or_else(|_| panic!("Failed to parse config file: {}", config_path))
+        match std::fs::read_to_string(&config_path) {
+            Ok(config_content) => toml::from_str(&config_content)
+                .unwrap_or_else(|_| panic!("Failed to parse config file: {}", config_path)),
+            Err(_) => {
+                // Provide a default configuration for tests or when config is missing
+                Config::default()
+            }
+        }
     };
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            image_filename: "frames/frame.png".to_string(),
+            stream: Stream {
+                stream_url: "https://example.com/stream".to_string(),
+                only_keyframes: true,
+                max_frames: None,
+                frame_processing_delay_ms: 100,
+            },
+            detection: Detection {
+                minimum_detection_percentage: 75,
+                minimum_detection_frames: 5,
+                api_url: "http://localhost:8000/detect".to_string(),
+                ignore_points: vec![],
+                minimum_x: 0,
+                maximum_x: 1200,
+                minimum_y: 0,
+                maximum_y: 720,
+                heatmap_resolution: 30,
+                heatmap_decay_rate: 0.9,
+                heatmap_threshold: 3.0,
+                heatmap_save_interval: 5,
+                save_image_confidence: 65,
+                minimum_post_confidence: 85,
+            },
+            output: Output {
+                post_interval: 120,
+                image_save_interval: 10,
+                line_color: [255, 112, 32, 1],
+                text_color: [0, 0, 0, 1],
+                line_thickness: 5,
+                output_file_folder: "saved_images".to_string(),
+                replace_hashtags: false,
+                messages: vec!["Test message".to_string()],
+                services: vec![],
+            },
+            twitter: Twitter {
+                token: String::new(),
+                token_secret: String::new(),
+                consumer_key: String::new(),
+                consumer_secret: String::new(),
+            },
+            mastodon: Mastodon {
+                host: String::new(),
+                token: String::new(),
+            },
+            bluesky: Bluesky {
+                host: "https://bsky.social".to_string(),
+                login: String::new(),
+                handle: String::new(),
+                password: String::new(),
+            },
+            kafka: Kafka {
+                broker: "localhost:19092".to_string(),
+                topic: "detection".to_string(),
+                detection_topic: "norppalive-detections".to_string(),
+                detection_message: "Test detection".to_string(),
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]

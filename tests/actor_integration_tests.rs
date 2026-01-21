@@ -1,19 +1,14 @@
 use actix::prelude::*;
 use std::io::Write;
 
-use norppalive_service::actors::services::TwitterActor; // Import the real TwitterActor
-use norppalive_service::actors::services::{BlueskyActor, KafkaActor, MastodonActor};
-use norppalive_service::messages::GetServiceStatus; // Added imports
+use norppalive_service::actors::services::ServiceActor;
+use norppalive_service::messages::GetServiceStatus;
 
-#[cfg(feature = "test-utils")] // Guard imports needed for tests using mocks
+#[cfg(feature = "test-utils")]
 use norppalive_service::services::{
-    generic::test_mocks::MockMockSocialMedia, // The mock itself
-    ServiceType,                              // To wrap the mock
+    generic::test_mocks::MockMockSocialMedia,
+    ServiceType,
 };
-
-// Import the mock actors instead of production actors
-// mod mocks; // Removed - this will require refactoring these tests to use mockall mocks
-// use mocks::{MockBlueskyActor, MockKafkaActor, MockMastodonActor, MockTwitterActor}; // Removed
 
 #[allow(dead_code)]
 fn create_test_image_file() -> Result<tempfile::NamedTempFile, std::io::Error> {
@@ -26,21 +21,17 @@ fn create_test_image_file() -> Result<tempfile::NamedTempFile, std::io::Error> {
 #[cfg_attr(
     not(feature = "test-utils"),
     ignore = "requires test-utils feature for mocks"
-)] // Ignore if feature not set
+)]
 async fn test_twitter_actor_creation() {
-    #[cfg(feature = "test-utils")] // Entire test logic depends on this feature
+    #[cfg(feature = "test-utils")]
     {
         let mut mock_service = MockMockSocialMedia::new();
-        mock_service.expect_name().times(1).returning(|| "Twitter"); // The actor's new() method calls service.name()
+        mock_service.expect_name().times(1).returning(|| "Twitter");
 
-        // When GetServiceStatus is handled, it clones service_status which was initialized with name.
-        // If other methods of the service were called by the actor, we'd mock them here.
+        let service_type_mock: ServiceType = mock_service.into();
+        let twitter_actor = ServiceActor::new(service_type_mock).start();
 
-        let service_type_mock: ServiceType = mock_service.into(); // Convert mock to ServiceType
-        let twitter_actor = TwitterActor::new(service_type_mock); // Inject mocked service
-
-        let actor_addr = twitter_actor.start();
-        let status_result = actor_addr.send(GetServiceStatus).await;
+        let status_result = twitter_actor.send(GetServiceStatus).await;
 
         assert!(status_result.is_ok(), "GetServiceStatus send failed");
         let status = status_result
@@ -54,8 +45,6 @@ async fn test_twitter_actor_creation() {
     }
     #[cfg(not(feature = "test-utils"))]
     {
-        // If mocks aren't available, this test can't run as intended.
-        // Alternatively, one could provide a real service, but that changes the test's nature.
         println!("Skipping test_twitter_actor_creation as test-utils feature is not enabled.");
     }
 }
@@ -71,9 +60,8 @@ async fn test_twitter_actor_startup() {
         let mut mock_service = MockMockSocialMedia::new();
         mock_service.expect_name().times(1).returning(|| "Twitter");
         let service_type_mock: ServiceType = mock_service.into();
-        let actor = TwitterActor::new(service_type_mock).start();
+        let actor = ServiceActor::new(service_type_mock).start();
 
-        // Test getting service status
         let status_result = actor.send(GetServiceStatus).await;
         assert!(status_result.is_ok(), "GetServiceStatus send failed");
         let status = status_result
@@ -101,7 +89,7 @@ async fn test_twitter_get_service_status() {
         let mut mock_service = MockMockSocialMedia::new();
         mock_service.expect_name().times(1).returning(|| "Twitter");
         let service_type_mock: ServiceType = mock_service.into();
-        let actor = TwitterActor::new(service_type_mock).start();
+        let actor = ServiceActor::new(service_type_mock).start();
 
         let status_result = actor.send(GetServiceStatus).await;
         assert!(status_result.is_ok(), "GetServiceStatus send failed");
@@ -109,7 +97,6 @@ async fn test_twitter_get_service_status() {
             .unwrap()
             .expect("GetServiceStatus handler failed");
 
-        // Verify status structure
         assert_eq!(status.name, "Twitter");
         assert!(status.healthy);
         assert!(status.last_post_time.is_none());
@@ -131,15 +118,11 @@ async fn test_twitter_concurrent_status_requests() {
     #[cfg(feature = "test-utils")]
     {
         let mut mock_service = MockMockSocialMedia::new();
-        // Name is called once per actor instantiation.
-        // If the actor was cloned and started multiple times, this would be different.
-        // For this test, one actor instance is created.
         mock_service.expect_name().times(1).returning(|| "Twitter");
 
         let service_type_mock: ServiceType = mock_service.into();
-        let actor_addr = TwitterActor::new(service_type_mock).start();
+        let actor_addr = ServiceActor::new(service_type_mock).start();
 
-        // Send multiple status requests concurrently
         let results = futures::future::join_all(vec![
             actor_addr.send(GetServiceStatus),
             actor_addr.send(GetServiceStatus),
@@ -147,7 +130,6 @@ async fn test_twitter_concurrent_status_requests() {
         ])
         .await;
 
-        // All should succeed
         for result in results {
             assert!(result.is_ok(), "Concurrent GetServiceStatus send failed");
             let status_option = result.unwrap();
@@ -177,7 +159,7 @@ async fn test_mastodon_actor_creation() {
         let mut mock_service = MockMockSocialMedia::new();
         mock_service.expect_name().times(1).returning(|| "Mastodon");
         let service_type_mock: ServiceType = mock_service.into();
-        let actor = MastodonActor::new(service_type_mock).start(); // Use real MastodonActor
+        let actor = ServiceActor::new(service_type_mock).start();
 
         let status_result = actor.send(GetServiceStatus).await;
         assert!(status_result.is_ok(), "GetServiceStatus send failed");
@@ -207,7 +189,7 @@ async fn test_bluesky_actor_creation() {
         let mut mock_service = MockMockSocialMedia::new();
         mock_service.expect_name().times(1).returning(|| "Bluesky");
         let service_type_mock: ServiceType = mock_service.into();
-        let actor = BlueskyActor::new(service_type_mock).start(); // Use real BlueskyActor
+        let actor = ServiceActor::new(service_type_mock).start();
 
         let status_result = actor.send(GetServiceStatus).await;
         assert!(status_result.is_ok(), "GetServiceStatus send failed");
@@ -237,7 +219,7 @@ async fn test_kafka_actor_creation() {
         let mut mock_service = MockMockSocialMedia::new();
         mock_service.expect_name().times(1).returning(|| "Kafka");
         let service_type_mock: ServiceType = mock_service.into();
-        let actor = KafkaActor::new(service_type_mock).start(); // Use real KafkaActor
+        let actor = ServiceActor::new(service_type_mock).start();
 
         let status_result = actor.send(GetServiceStatus).await;
         assert!(status_result.is_ok(), "GetServiceStatus send failed");
@@ -270,7 +252,7 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Twitter");
-        let twitter_actor = TwitterActor::new(mock_twitter_service.into()).start();
+        let twitter_actor = ServiceActor::new(Into::<ServiceType>::into(mock_twitter_service)).start();
 
         // Mastodon
         let mut mock_mastodon_service = MockMockSocialMedia::new();
@@ -278,7 +260,7 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Mastodon");
-        let mastodon_actor = MastodonActor::new(mock_mastodon_service.into()).start();
+        let mastodon_actor = ServiceActor::new(Into::<ServiceType>::into(mock_mastodon_service)).start();
 
         // Bluesky
         let mut mock_bluesky_service = MockMockSocialMedia::new();
@@ -286,7 +268,7 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Bluesky");
-        let bluesky_actor = BlueskyActor::new(mock_bluesky_service.into()).start();
+        let bluesky_actor = ServiceActor::new(Into::<ServiceType>::into(mock_bluesky_service)).start();
 
         // Kafka
         let mut mock_kafka_service = MockMockSocialMedia::new();
@@ -294,7 +276,7 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Kafka");
-        let kafka_actor = KafkaActor::new(mock_kafka_service.into()).start();
+        let kafka_actor = ServiceActor::new(Into::<ServiceType>::into(mock_kafka_service)).start();
 
         // Test that all actors are responsive
         let twitter_status_res = twitter_actor.send(GetServiceStatus).await;
