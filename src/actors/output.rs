@@ -2,8 +2,9 @@ use actix::prelude::*;
 use tracing::{debug, error, info, warn};
 
 use crate::actors::names::{BLUESKY_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, TWITTER_ACTOR};
-use crate::actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
+use crate::actors::services::ServiceActor;
 use crate::actors::SupervisorActor;
+use crate::services::{BlueskyService, KafkaService, MastodonService, TwitterService};
 use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts};
@@ -18,10 +19,10 @@ use crate::utils::output::OutputServiceTrait;
 /// OutputActor coordinates output operations (posting, saving)
 pub struct OutputActor {
     output_service: Box<dyn OutputServiceTrait>,
-    twitter_actor: Option<Addr<TwitterActor>>,
-    bluesky_actor: Option<Addr<BlueskyActor>>,
-    mastodon_actor: Option<Addr<MastodonActor>>,
-    kafka_actor: Option<Addr<KafkaActor>>,
+    twitter_actor: Option<Addr<ServiceActor<TwitterService>>>,
+    bluesky_actor: Option<Addr<ServiceActor<BlueskyService>>>,
+    mastodon_actor: Option<Addr<ServiceActor<MastodonService>>>,
+    kafka_actor: Option<Addr<ServiceActor<KafkaService>>>,
     supervisor_actor: Option<Addr<SupervisorActor>>,
     last_post_time: i64,
     last_save_time: i64,
@@ -78,10 +79,10 @@ impl OutputActor {
 
     pub fn with_services(
         output_service: Box<dyn OutputServiceTrait>,
-        twitter_actor: Option<Addr<TwitterActor>>,
-        bluesky_actor: Option<Addr<BlueskyActor>>,
-        mastodon_actor: Option<Addr<MastodonActor>>,
-        kafka_actor: Option<Addr<KafkaActor>>,
+        twitter_actor: Option<Addr<ServiceActor<TwitterService>>>,
+        bluesky_actor: Option<Addr<ServiceActor<BlueskyService>>>,
+        mastodon_actor: Option<Addr<ServiceActor<MastodonService>>>,
+        kafka_actor: Option<Addr<ServiceActor<KafkaService>>>,
         supervisor_actor: Option<Addr<SupervisorActor>>,
     ) -> Self {
         Self {
@@ -368,7 +369,7 @@ impl Handler<ActorRestarted> for OutputActor {
             TWITTER_ACTOR => {
                 match msg
                     .new_address
-                    .downcast_ref::<Addr<TwitterActor>>()
+                    .downcast_ref::<Addr<ServiceActor<TwitterService>>>()
                     .cloned()
                 {
                     Some(addr) => {
@@ -388,7 +389,7 @@ impl Handler<ActorRestarted> for OutputActor {
             BLUESKY_ACTOR => {
                 match msg
                     .new_address
-                    .downcast_ref::<Addr<BlueskyActor>>()
+                    .downcast_ref::<Addr<ServiceActor<BlueskyService>>>()
                     .cloned()
                 {
                     Some(addr) => {
@@ -408,7 +409,7 @@ impl Handler<ActorRestarted> for OutputActor {
             MASTODON_ACTOR => {
                 match msg
                     .new_address
-                    .downcast_ref::<Addr<MastodonActor>>()
+                    .downcast_ref::<Addr<ServiceActor<MastodonService>>>()
                     .cloned()
                 {
                     Some(addr) => {
@@ -426,7 +427,11 @@ impl Handler<ActorRestarted> for OutputActor {
                 }
             }
             KAFKA_ACTOR => {
-                match msg.new_address.downcast_ref::<Addr<KafkaActor>>().cloned() {
+                match msg
+                    .new_address
+                    .downcast_ref::<Addr<ServiceActor<KafkaService>>>()
+                    .cloned()
+                {
                     Some(addr) => {
                         info!("Updated KafkaActor address after restart");
                         self.kafka_actor = Some(addr);

@@ -19,10 +19,10 @@ use crate::actors::names::{
 };
 use crate::config::{Service, CONFIG};
 use crate::messages::supervisor::{RegisterActor, SystemShutdown};
-use actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
+use actors::services::ServiceActor;
 use actors::{DetectionActor, OutputActor, StreamActor, SupervisorActor};
 use messages::{GetSystemHealth, StartStream};
-use services::{BlueskyService, KafkaService, MastodonService, ServiceType, TwitterService};
+use services::{BlueskyService, KafkaService, MastodonService, TwitterService};
 use utils::output::OutputService;
 
 fn is_service_enabled(service: &Service) -> bool {
@@ -66,25 +66,25 @@ fn main() -> Result<()> {
         // Start only the service actors that are configured
         let twitter_actor = if is_service_enabled(&Service::Twitter) {
             info!("Starting Twitter service");
-            Some(TwitterActor::new(ServiceType::TwitterService(TwitterService)).start())
+            Some(ServiceActor::new(TwitterService).start())
         } else {
             None
         };
         let bluesky_actor = if is_service_enabled(&Service::Bluesky) {
             info!("Starting Bluesky service");
-            Some(BlueskyActor::new(ServiceType::BlueskyService(BlueskyService::default())).start())
+            Some(ServiceActor::new(BlueskyService::default()).start())
         } else {
             None
         };
         let mastodon_actor = if is_service_enabled(&Service::Mastodon) {
             info!("Starting Mastodon service");
-            Some(MastodonActor::new(ServiceType::MastodonService(MastodonService)).start())
+            Some(ServiceActor::new(MastodonService).start())
         } else {
             None
         };
         let kafka_actor = if is_service_enabled(&Service::Kafka) {
             info!("Starting Kafka service");
-            Some(KafkaActor::new(ServiceType::KafkaService(KafkaService::default())).start())
+            Some(ServiceActor::new(KafkaService::default()).start())
         } else {
             None
         };
@@ -115,30 +115,25 @@ fn main() -> Result<()> {
         // Only register service actors that are enabled in config
         if twitter_actor.is_some() {
             let twitter_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(TwitterActor::new(ServiceType::TwitterService(TwitterService)).start())
+                Arc::new(ServiceActor::new(TwitterService).start())
             });
             supervisor.do_send(RegisterActor::with_factory(TWITTER_ACTOR, twitter_factory));
         }
         if bluesky_actor.is_some() {
             let bluesky_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(
-                    BlueskyActor::new(ServiceType::BlueskyService(BlueskyService::default()))
-                        .start(),
-                )
+                Arc::new(ServiceActor::new(BlueskyService::default()).start())
             });
             supervisor.do_send(RegisterActor::with_factory(BLUESKY_ACTOR, bluesky_factory));
         }
         if mastodon_actor.is_some() {
             let mastodon_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(MastodonActor::new(ServiceType::MastodonService(MastodonService)).start())
+                Arc::new(ServiceActor::new(MastodonService).start())
             });
             supervisor.do_send(RegisterActor::with_factory(MASTODON_ACTOR, mastodon_factory));
         }
         if kafka_actor.is_some() {
             let kafka_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(
-                    KafkaActor::new(ServiceType::KafkaService(KafkaService::default())).start(),
-                )
+                Arc::new(ServiceActor::new(KafkaService::default()).start())
             });
             supervisor.do_send(RegisterActor::with_factory(KAFKA_ACTOR, kafka_factory));
         }
