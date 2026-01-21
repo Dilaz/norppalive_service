@@ -99,7 +99,7 @@ where
             .map(|result, actor, _ctx| {
                 if let Ok(ref post_result) = result {
                     if post_result.success {
-                        actor.service_status.last_post_time = Some(Utc::now().timestamp());
+                        actor.service_status.last_post_time = Some(post_result.posted_at);
                         actor.service_status.error_count = 0;
                         actor.service_status.healthy = true;
                     } else {
