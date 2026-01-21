@@ -8,9 +8,11 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
+use crate::actors::names::DETECTION_ACTOR;
+use crate::actors::DetectionActor;
 use crate::config::CONFIG;
 use crate::error::NorppaliveError;
-use crate::messages::supervisor::SystemShutdown;
+use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts, SystemShutdown};
 use crate::messages::{
     DetectorReady, FrameExtracted, GracefulStop, InternalProcessingComplete, LatestFrameAvailable,
     ProcessFrame, StartStream, StopStream,
@@ -47,8 +49,16 @@ pub struct StreamActor {
 impl Actor for StreamActor {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         info!("StreamActor started");
+
+        // Subscribe to restart notifications from supervisor
+        if let Some(ref supervisor) = self.supervisor_actor {
+            supervisor.do_send(SubscribeToRestarts {
+                subscriber: ctx.address().recipient(),
+            });
+            info!("StreamActor subscribed to restart notifications");
+        }
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -821,6 +831,37 @@ impl Handler<GracefulStop> for StreamActor {
         if let Some(ack_sender) = msg.ack_sender {
             let _ = ack_sender.send(());
             info!(target: "stream", "StreamActor: Sent shutdown acknowledgment");
+        }
+    }
+}
+
+impl Handler<ActorRestarted> for StreamActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: ActorRestarted, _ctx: &mut Self::Context) -> Self::Result {
+        info!(
+            "StreamActor received restart notification for actor: {}",
+            msg.actor_name
+        );
+
+        if msg.actor_name == DETECTION_ACTOR {
+            match msg
+                .new_address
+                .downcast_ref::<Addr<DetectionActor>>()
+                .cloned()
+            {
+                Some(addr) => {
+                    info!("StreamActor: Updated DetectionActor reference after restart");
+                    self.detection_actor = Some(addr);
+                }
+                None => {
+                    error!(
+                        "StreamActor: Failed to downcast DetectionActor address. \
+                         Detection will be disabled until next restart."
+                    );
+                    self.detection_actor = None;
+                }
+            }
         }
     }
 }

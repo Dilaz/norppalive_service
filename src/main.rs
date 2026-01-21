@@ -138,8 +138,18 @@ fn main() -> Result<()> {
             supervisor.do_send(RegisterActor::with_factory(KAFKA_ACTOR, kafka_factory));
         }
 
-        // Register core actors without factories (complex dependencies make restart harder)
-        supervisor.do_send(RegisterActor::new(STREAM_ACTOR));
+        // Register StreamActor with factory for auto-restart capability
+        // The factory captures dependencies; ActorRestarted handler updates stale references
+        let stream_factory: ActorFactoryFn = {
+            let detection = detection_actor.clone();
+            let sup = supervisor.clone();
+            Arc::new(move || {
+                Arc::new(StreamActor::with_actors(detection.clone(), sup.clone()).start())
+            })
+        };
+        supervisor.do_send(RegisterActor::with_factory(STREAM_ACTOR, stream_factory));
+
+        // Register other core actors without factories (complex dependencies make restart harder)
         supervisor.do_send(RegisterActor::new(DETECTION_ACTOR));
         supervisor.do_send(RegisterActor::new(OUTPUT_ACTOR));
 
