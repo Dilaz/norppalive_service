@@ -1,5 +1,5 @@
 use actix::prelude::*;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::actors::names::{BLUESKY_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, TWITTER_ACTOR};
 use crate::actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
@@ -366,52 +366,84 @@ impl Handler<ActorRestarted> for OutputActor {
         // Try to downcast and update the appropriate actor address
         match msg.actor_name.as_str() {
             TWITTER_ACTOR => {
-                if let Some(addr) = msg
+                match msg
                     .new_address
                     .downcast_ref::<Addr<TwitterActor>>()
                     .cloned()
                 {
-                    info!("Updated TwitterActor address after restart");
-                    self.twitter_actor = Some(addr);
-                } else {
-                    warn!("Failed to downcast new TwitterActor address");
+                    Some(addr) => {
+                        info!("Updated TwitterActor address after restart");
+                        self.twitter_actor = Some(addr);
+                    }
+                    None => {
+                        error!(
+                            "Type mismatch: Failed to downcast {} address. \
+                             Service will be disabled until next restart.",
+                            TWITTER_ACTOR
+                        );
+                        self.twitter_actor = None;
+                    }
                 }
             }
             BLUESKY_ACTOR => {
-                if let Some(addr) = msg
+                match msg
                     .new_address
                     .downcast_ref::<Addr<BlueskyActor>>()
                     .cloned()
                 {
-                    info!("Updated BlueskyActor address after restart");
-                    self.bluesky_actor = Some(addr);
-                } else {
-                    warn!("Failed to downcast new BlueskyActor address");
+                    Some(addr) => {
+                        info!("Updated BlueskyActor address after restart");
+                        self.bluesky_actor = Some(addr);
+                    }
+                    None => {
+                        error!(
+                            "Type mismatch: Failed to downcast {} address. \
+                             Service will be disabled until next restart.",
+                            BLUESKY_ACTOR
+                        );
+                        self.bluesky_actor = None;
+                    }
                 }
             }
             MASTODON_ACTOR => {
-                if let Some(addr) = msg
+                match msg
                     .new_address
                     .downcast_ref::<Addr<MastodonActor>>()
                     .cloned()
                 {
-                    info!("Updated MastodonActor address after restart");
-                    self.mastodon_actor = Some(addr);
-                } else {
-                    warn!("Failed to downcast new MastodonActor address");
+                    Some(addr) => {
+                        info!("Updated MastodonActor address after restart");
+                        self.mastodon_actor = Some(addr);
+                    }
+                    None => {
+                        error!(
+                            "Type mismatch: Failed to downcast {} address. \
+                             Service will be disabled until next restart.",
+                            MASTODON_ACTOR
+                        );
+                        self.mastodon_actor = None;
+                    }
                 }
             }
             KAFKA_ACTOR => {
-                if let Some(addr) = msg.new_address.downcast_ref::<Addr<KafkaActor>>().cloned() {
-                    info!("Updated KafkaActor address after restart");
-                    self.kafka_actor = Some(addr);
-                } else {
-                    warn!("Failed to downcast new KafkaActor address");
+                match msg.new_address.downcast_ref::<Addr<KafkaActor>>().cloned() {
+                    Some(addr) => {
+                        info!("Updated KafkaActor address after restart");
+                        self.kafka_actor = Some(addr);
+                    }
+                    None => {
+                        error!(
+                            "Type mismatch: Failed to downcast {} address. \
+                             Service will be disabled until next restart.",
+                            KAFKA_ACTOR
+                        );
+                        self.kafka_actor = None;
+                    }
                 }
             }
             _ => {
                 debug!(
-                    "OutputActor ignoring restart notification for unrelated actor: {}",
+                    "OutputActor ignoring restart notification for actor: {}",
                     msg.actor_name
                 );
             }
