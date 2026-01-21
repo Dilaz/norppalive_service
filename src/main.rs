@@ -13,6 +13,10 @@ pub mod messages;
 pub mod services;
 pub mod utils;
 
+use crate::actors::names::{
+    BLUESKY_ACTOR, DETECTION_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, OUTPUT_ACTOR, STREAM_ACTOR,
+    TWITTER_ACTOR,
+};
 use crate::config::{Service, CONFIG};
 use crate::messages::supervisor::{RegisterActor, SystemShutdown};
 use actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
@@ -113,7 +117,7 @@ fn main() -> Result<()> {
             let twitter_factory: ActorFactoryFn = Arc::new(|| {
                 Arc::new(TwitterActor::new(ServiceType::TwitterService(TwitterService)).start())
             });
-            supervisor.do_send(RegisterActor::with_factory("TwitterActor", twitter_factory));
+            supervisor.do_send(RegisterActor::with_factory(TWITTER_ACTOR, twitter_factory));
         }
         if bluesky_actor.is_some() {
             let bluesky_factory: ActorFactoryFn = Arc::new(|| {
@@ -122,16 +126,13 @@ fn main() -> Result<()> {
                         .start(),
                 )
             });
-            supervisor.do_send(RegisterActor::with_factory("BlueskyActor", bluesky_factory));
+            supervisor.do_send(RegisterActor::with_factory(BLUESKY_ACTOR, bluesky_factory));
         }
         if mastodon_actor.is_some() {
             let mastodon_factory: ActorFactoryFn = Arc::new(|| {
                 Arc::new(MastodonActor::new(ServiceType::MastodonService(MastodonService)).start())
             });
-            supervisor.do_send(RegisterActor::with_factory(
-                "MastodonActor",
-                mastodon_factory,
-            ));
+            supervisor.do_send(RegisterActor::with_factory(MASTODON_ACTOR, mastodon_factory));
         }
         if kafka_actor.is_some() {
             let kafka_factory: ActorFactoryFn = Arc::new(|| {
@@ -139,13 +140,13 @@ fn main() -> Result<()> {
                     KafkaActor::new(ServiceType::KafkaService(KafkaService::default())).start(),
                 )
             });
-            supervisor.do_send(RegisterActor::with_factory("KafkaActor", kafka_factory));
+            supervisor.do_send(RegisterActor::with_factory(KAFKA_ACTOR, kafka_factory));
         }
 
         // Register core actors without factories (complex dependencies make restart harder)
-        supervisor.do_send(RegisterActor::new("StreamActor"));
-        supervisor.do_send(RegisterActor::new("DetectionActor"));
-        supervisor.do_send(RegisterActor::new("OutputActor"));
+        supervisor.do_send(RegisterActor::new(STREAM_ACTOR));
+        supervisor.do_send(RegisterActor::new(DETECTION_ACTOR));
+        supervisor.do_send(RegisterActor::new(OUTPUT_ACTOR));
 
         info!("Actor system started");
 

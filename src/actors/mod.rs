@@ -1,4 +1,5 @@
 pub mod detection;
+pub mod names;
 pub mod output;
 pub mod services;
 pub mod stream;

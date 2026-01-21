@@ -1,6 +1,7 @@
 use actix::prelude::*;
 use tracing::{debug, info, warn};
 
+use crate::actors::names::{BLUESKY_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, TWITTER_ACTOR};
 use crate::actors::services::{BlueskyActor, KafkaActor, MastodonActor, TwitterActor};
 use crate::actors::SupervisorActor;
 use crate::config::CONFIG;
@@ -364,7 +365,7 @@ impl Handler<ActorRestarted> for OutputActor {
 
         // Try to downcast and update the appropriate actor address
         match msg.actor_name.as_str() {
-            "TwitterActor" => {
+            TWITTER_ACTOR => {
                 if let Some(addr) = msg
                     .new_address
                     .downcast_ref::<Addr<TwitterActor>>()
@@ -376,7 +377,7 @@ impl Handler<ActorRestarted> for OutputActor {
                     warn!("Failed to downcast new TwitterActor address");
                 }
             }
-            "BlueskyActor" => {
+            BLUESKY_ACTOR => {
                 if let Some(addr) = msg
                     .new_address
                     .downcast_ref::<Addr<BlueskyActor>>()
@@ -388,7 +389,7 @@ impl Handler<ActorRestarted> for OutputActor {
                     warn!("Failed to downcast new BlueskyActor address");
                 }
             }
-            "MastodonActor" => {
+            MASTODON_ACTOR => {
                 if let Some(addr) = msg
                     .new_address
                     .downcast_ref::<Addr<MastodonActor>>()
@@ -400,7 +401,7 @@ impl Handler<ActorRestarted> for OutputActor {
                     warn!("Failed to downcast new MastodonActor address");
                 }
             }
-            "KafkaActor" => {
+            KAFKA_ACTOR => {
                 if let Some(addr) = msg.new_address.downcast_ref::<Addr<KafkaActor>>().cloned() {
                     info!("Updated KafkaActor address after restart");
                     self.kafka_actor = Some(addr);
