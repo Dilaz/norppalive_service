@@ -21,10 +21,6 @@ data:
     maximum_x = 1920
     minimum_y = 0
     maximum_y = 1080
-    heatmap_resolution = 30
-    heatmap_decay_rate = 0.9
-    heatmap_threshold = 3.0
-    heatmap_save_interval = 5
     save_image_confidence = 65
     minimum_post_confidence = 80
 

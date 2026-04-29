@@ -8,7 +8,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tracing::{debug, error, info};
 
-use crate::{config::CONFIG, error::NorppaliveError, utils::temperature_map::TemperatureMap};
+use crate::{config::CONFIG, error::NorppaliveError};
 
 const CONFIDENCE_MULTIPLIER: f32 = 100.0;
 
@@ -54,13 +54,10 @@ impl From<ApiDetection> for DetectionResult {
 #[async_trait]
 pub trait DetectionServiceTrait: Send {
     async fn do_detection(&self, filename: &str) -> Result<Vec<DetectionResult>, NorppaliveError>;
-    fn has_heatmap_hotspots(&self, percentile_threshold: f64) -> bool;
-    fn update_temperature_map(&mut self, detections: &[DetectionResult]);
     fn filter_acceptable_detections<'a>(
         &self,
         detection_result: &'a [DetectionResult],
     ) -> Vec<&'a DetectionResult>;
-    fn get_temperature_map(&self) -> &TemperatureMap;
 }
 
 // Mock implementation for testing
@@ -68,8 +65,6 @@ pub trait DetectionServiceTrait: Send {
 pub struct MockDetectionService {
     pub should_fail: bool,
     pub mock_detections: Vec<DetectionResult>,
-    pub temperature_map: TemperatureMap,
-    pub mock_has_hotspots: bool,
 }
 
 #[cfg(test)]
@@ -85,8 +80,6 @@ impl MockDetectionService {
         Self {
             should_fail: false,
             mock_detections: vec![],
-            temperature_map: TemperatureMap::new(1280, 720),
-            mock_has_hotspots: false,
         }
     }
 
@@ -97,12 +90,6 @@ impl MockDetectionService {
 
     pub fn with_failure(mut self, should_fail: bool) -> Self {
         self.should_fail = should_fail;
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn with_hotspots(mut self, has_hotspots: bool) -> Self {
-        self.mock_has_hotspots = has_hotspots;
         self
     }
 }
@@ -117,23 +104,11 @@ impl DetectionServiceTrait for MockDetectionService {
         Ok(self.mock_detections.clone())
     }
 
-    fn has_heatmap_hotspots(&self, _percentile_threshold: f64) -> bool {
-        self.mock_has_hotspots
-    }
-
-    fn update_temperature_map(&mut self, _detections: &[DetectionResult]) {
-        // Mock does nothing
-    }
-
     fn filter_acceptable_detections<'a>(
         &self,
         detection_result: &'a [DetectionResult],
     ) -> Vec<&'a DetectionResult> {
         detection_result.iter().collect()
-    }
-
-    fn get_temperature_map(&self) -> &TemperatureMap {
-        &self.temperature_map
     }
 }
 
@@ -166,32 +141,14 @@ where
     Ok((f * 100.0) as u8)
 }
 
-/// DetectionService handles ML detection and temperature map tracking.
+/// DetectionService handles ML detection.
 /// Output operations (posting, saving) are handled by OutputActor.
-pub struct DetectionService {
-    temperature_map: TemperatureMap,
-}
-
-impl Default for DetectionService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[derive(Default)]
+pub struct DetectionService;
 
 impl DetectionService {
     pub fn new() -> Self {
-        Self {
-            temperature_map: TemperatureMap::new(1280, 720),
-        }
-    }
-
-    pub fn has_heatmap_hotspots(&self, percentile_threshold: f64) -> bool {
-        self.temperature_map
-            .has_histogram_hotspots(percentile_threshold)
-    }
-
-    pub fn get_temperature_map(&self) -> &TemperatureMap {
-        &self.temperature_map
+        Self
     }
 
     async fn do_detection_impl(
@@ -257,7 +214,7 @@ impl DetectionService {
 
         let response_text = match res.text().await {
             Ok(text) => {
-                info!("Received raw response: {}", text);
+                info!(bytes = text.len(), "Received raw response: {:?}", text);
                 text
             }
             Err(e) => {
@@ -322,29 +279,10 @@ impl DetectionServiceTrait for DetectionService {
         self.do_detection_impl(filename).await
     }
 
-    fn has_heatmap_hotspots(&self, percentile_threshold: f64) -> bool {
-        self.temperature_map
-            .has_histogram_hotspots(percentile_threshold)
-    }
-
-    fn update_temperature_map(&mut self, detections: &[DetectionResult]) {
-        self.temperature_map
-            .apply_decay(CONFIG.detection.heatmap_decay_rate);
-
-        let acceptable = self.filter_acceptable_detections(detections);
-        if !acceptable.is_empty() {
-            self.temperature_map.set_points_from_detections(&acceptable);
-        }
-    }
-
     fn filter_acceptable_detections<'a>(
         &self,
         detection_result: &'a [DetectionResult],
     ) -> Vec<&'a DetectionResult> {
         DetectionService::filter_acceptable_detections(self, detection_result)
-    }
-
-    fn get_temperature_map(&self) -> &TemperatureMap {
-        &self.temperature_map
     }
 }

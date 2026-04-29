@@ -24,8 +24,8 @@ graph TB
     %% Core Actors
     Supervisor[SupervisorActor<br/>• Health monitoring<br/>• Factory-based restarts<br/>• System status]
     Stream[StreamActor<br/>• FFmpeg processing<br/>• Frame extraction<br/>• Stream management]
-    Detection[DetectionActor<br/>• Image analysis<br/>• Temperature mapping<br/>• Statistics tracking]
-    Output[OutputActor<br/>• Coordinates posting<br/>• Image saving<br/>• Heatmap visualization]
+    Detection[DetectionActor<br/>• Image analysis<br/>• Statistics tracking]
+    Output[OutputActor<br/>• Coordinates posting<br/>• Image saving]
     
     %% Service Actors
     Twitter[TwitterActor<br/>• Rate limiting<br/>• Auth management<br/>• Tweet posting]
@@ -117,7 +117,7 @@ graph TB
 Fill in the `config.toml` file with the necessary information. The configuration includes:
 
 - **Stream settings**: Video source URL and processing options
-- **Detection settings**: AI API configuration, confidence thresholds, heatmap parameters
+- **Detection settings**: AI API configuration, confidence thresholds
 - **Output settings**: Social media posting intervals, image saving, visualization options
 - **Service credentials**: Twitter, Mastodon, Bluesky, and Kafka configuration
 
@@ -137,7 +137,7 @@ The service will:
 2. Start video stream processing
 3. Perform real-time seal detection using AI/ML
 4. Post to configured social media services when detections meet criteria
-5. Save detection images and heatmap visualizations
+5. Save detection images
 6. Send notifications via Kafka for external integrations
 
 ### Environment Variables
@@ -185,8 +185,7 @@ src/
 └── utils/                      # Utility functions and helpers
     ├── detection_utils.rs       # Detection processing and API integration
     ├── output.rs                # Output coordination utilities
-    ├── image_utils.rs           # Image processing and visualization
-    └── temperature_map.rs       # Heatmap generation and analysis
+    └── image_utils.rs           # Image processing and visualization
 ```
 
 ## Running Tests
@@ -198,7 +197,7 @@ The project includes comprehensive unit, integration, and actor tests covering a
 #### Core Actor Tests (61 tests total)
 - **SupervisorActor** (8 tests): Health monitoring, actor registration, restart functionality, system health reporting
 - **DetectionActor** (6 tests): Frame processing, statistics tracking, error handling, concurrent operations
-- **OutputActor** (8 tests): Social media posting, image saving, heatmap visualization, service coordination
+- **OutputActor** (8 tests): Social media posting, image saving, service coordination
 - **StreamActor** (10 tests): Stream start/stop, frame extraction, concurrent operations, various stream URLs
 - **TwitterActor** (12 tests): Rate limiting, service status, error handling, concurrent requests, authentication
 
@@ -210,8 +209,7 @@ The project includes comprehensive unit, integration, and actor tests covering a
 - **Message Bus Abstraction**: Future-ready communication patterns
 
 #### Utility Tests (9 tests)
-- **Detection Utils**: Temperature mapping, hotspot detection, configuration handling
-- **Temperature Map**: Heatmap generation, hotspot analysis, decay algorithms
+- **Detection Utils**: Configuration handling, detection filtering
 - **Kafka Services**: Event serialization and notification handling
 
 #### Legacy Tests (2 tests)

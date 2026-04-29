@@ -26,7 +26,7 @@ pub struct DetectionActor {
 impl Default for DetectionActor {
     fn default() -> Self {
         Self {
-            detection_service: Arc::new(Mutex::new(DetectionService::default())),
+            detection_service: Arc::new(Mutex::new(DetectionService)),
             total_detections: 0,
             consecutive_detections: 0,
             last_detection_time: 0,
@@ -108,14 +108,9 @@ impl Handler<ProcessFrame> for DetectionActor {
 
         Box::pin(
             async move {
-                let mut service_instance = detection_service.lock().await;
+                let service_instance = detection_service.lock().await;
                 // Detection API still uses file path (external service)
                 let detection_result = service_instance.do_detection(&image_path).await;
-
-                // Update temperature map with detections
-                if let Ok(detections) = &detection_result {
-                    service_instance.update_temperature_map(detections);
-                }
 
                 // Filter detections to only include high-confidence, valid ones
                 let filtered_detections = if let Ok(detections) = &detection_result {
@@ -157,36 +152,14 @@ impl Handler<ProcessFrame> for DetectionActor {
 }
 
 impl Handler<GetDetectionStats> for DetectionActor {
-    type Result = ResponseActFuture<Self, Result<DetectionStats, NorppaliveError>>;
+    type Result = Result<DetectionStats, NorppaliveError>;
 
     fn handle(&mut self, _msg: GetDetectionStats, _ctx: &mut Self::Context) -> Self::Result {
-        let detection_service_arc = self.detection_service.clone();
-
-        Box::pin(
-            async move {
-                let service_guard = detection_service_arc.lock().await;
-                let has_hotspots = service_guard.has_heatmap_hotspots(85.0);
-                Ok::<bool, NorppaliveError>(has_hotspots)
-            }
-            .into_actor(self)
-            .map(
-                |has_hotspots_result, actor, _ctx| match has_hotspots_result {
-                    Ok(hotspots) => Ok(DetectionStats {
-                        total_detections: actor.total_detections,
-                        consecutive_detections: actor.consecutive_detections,
-                        last_detection_time: actor.last_detection_time,
-                        temperature_map_hotspots: hotspots,
-                    }),
-                    Err(e) => {
-                        error!("Failed to get detection stats (heatmap status): {}", e);
-                        Err(NorppaliveError::Other(format!(
-                            "Failed to get heatmap status: {}",
-                            e
-                        )))
-                    }
-                },
-            ),
-        )
+        Ok(DetectionStats {
+            total_detections: self.total_detections,
+            consecutive_detections: self.consecutive_detections,
+            last_detection_time: self.last_detection_time,
+        })
     }
 }
 
@@ -243,21 +216,18 @@ mod tests {
 
     #[actix::test]
     async fn test_detection_actor_startup() {
-        let mock_service_impl = MockDetectionService::new().with_hotspots(true);
-        let mock_service = Arc::new(Mutex::new(mock_service_impl));
+        let mock_service = Arc::new(Mutex::new(MockDetectionService::new()));
         let actor = DetectionActor::new_with_service(mock_service).start();
 
         let stats = actor.send(GetDetectionStats).await.unwrap().unwrap();
         assert_eq!(stats.total_detections, 0);
         assert_eq!(stats.consecutive_detections, 0);
         assert_eq!(stats.last_detection_time, 0);
-        assert!(stats.temperature_map_hotspots);
     }
 
     #[actix::test]
     async fn test_get_detection_stats() {
-        let mock_service_impl = MockDetectionService::new().with_hotspots(false);
-        let mock_service = Arc::new(Mutex::new(mock_service_impl));
+        let mock_service = Arc::new(Mutex::new(MockDetectionService::new()));
         let actor = DetectionActor::new_with_service(mock_service).start();
 
         let stats = actor.send(GetDetectionStats).await.unwrap().unwrap();
@@ -265,7 +235,6 @@ mod tests {
         assert_eq!(stats.total_detections, 0);
         assert_eq!(stats.consecutive_detections, 0);
         assert_eq!(stats.last_detection_time, 0);
-        assert!(!stats.temperature_map_hotspots);
     }
 
     #[actix::test]

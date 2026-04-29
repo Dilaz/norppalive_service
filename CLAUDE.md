@@ -61,7 +61,7 @@ and restarts failed actors using registered factory functions.
 - `src/main.rs` - Actor system initialization and startup sequence
 - `src/actors/supervisor.rs` - Health monitoring, factory-based restarts (647 lines)
 - `src/actors/stream.rs` - FFmpeg video processing, frame extraction (826 lines)
-- `src/actors/detection.rs` - AI API calls, confidence filtering, heatmap data (446 lines)
+- `src/actors/detection.rs` - AI API calls, confidence filtering (446 lines)
 - `src/actors/output.rs` - Social media coordination, rate limiting (610 lines)
 - `src/config.rs` - Global CONFIG singleton, TOML parsing
 - `src/messages/` - All actor message type definitions
@@ -72,7 +72,7 @@ Config file location set by `CONFIG_PATH` env var (default: `config.toml`). Copy
 
 Key config sections:
 - `[stream]` - Video source URL, keyframe-only mode, frame delay
-- `[detection]` - AI API URL, confidence thresholds, heatmap settings
+- `[detection]` - AI API URL, confidence thresholds
 - `[output]` - Post intervals, services to enable, visualization colors
 - `[twitter]`, `[mastodon]`, `[bluesky]`, `[kafka]` - Service credentials
 

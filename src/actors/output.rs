@@ -10,7 +10,7 @@ use crate::error::NorppaliveError;
 use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts};
 use crate::messages::{
     DetectionCompleted, GetServiceStatus, GracefulStop, PostToSocialMedia, SaveDetectionImage,
-    SaveHeatmapVisualization, ServicePost, ServiceStatus,
+    ServicePost, ServiceStatus,
 };
 use crate::utils::image_utils::draw_boxes_on_provided_image;
 use crate::utils::output::OutputService;
@@ -172,48 +172,6 @@ impl Handler<SaveDetectionImage> for OutputActor {
                 image_with_boxes.save(&image_path)?;
 
                 info!("Detection image saved to: {}", image_path);
-                Ok(())
-            }
-            .into_actor(self),
-        )
-    }
-}
-
-impl Handler<SaveHeatmapVisualization> for OutputActor {
-    type Result = ResponseActFuture<Self, Result<(), NorppaliveError>>;
-
-    fn handle(&mut self, msg: SaveHeatmapVisualization, _ctx: &mut Self::Context) -> Self::Result {
-        info!("Saving heatmap visualization");
-
-        Box::pin(
-            async move {
-                use crate::config::CONFIG;
-                use chrono::Utc;
-                use image::RgbImage;
-                use std::fs;
-
-                // Create output directory if it doesn't exist
-                fs::create_dir_all(&CONFIG.output.output_file_folder)?;
-
-                // Create a base image for the heatmap
-                let mut base_image = image::DynamicImage::ImageRgb8(RgbImage::new(
-                    msg.temp_map.width,
-                    msg.temp_map.height,
-                ));
-
-                // Draw the temperature map on the base image
-                msg.temp_map.draw(&mut base_image)?;
-
-                // Save the heatmap image with timestamp
-                let timestamp = Utc::now().timestamp();
-                let heatmap_path = format!(
-                    "{}/heatmap-{}.jpg",
-                    CONFIG.output.output_file_folder, timestamp
-                );
-
-                base_image.save(&heatmap_path)?;
-
-                info!("Heatmap visualization saved to: {}", heatmap_path);
                 Ok(())
             }
             .into_actor(self),
@@ -479,7 +437,6 @@ mod tests {
     use crate::utils::detection_utils::DetectionResult;
     #[cfg(any(test, feature = "test-utils"))]
     use crate::utils::output::MockOutputService;
-    use crate::utils::temperature_map::TemperatureMap;
 
     use image::{DynamicImage, RgbImage};
 
@@ -550,21 +507,6 @@ mod tests {
     }
 
     #[actix::test]
-    async fn test_save_heatmap_visualization() {
-        let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
-
-        let temp_map = TemperatureMap::new(100, 100);
-
-        let result = actor
-            .send(SaveHeatmapVisualization { temp_map })
-            .await
-            .unwrap();
-
-        // Should complete without error (stub implementation)
-        assert!(result.is_ok());
-    }
-
-    #[actix::test]
     async fn test_get_service_status() {
         let actor = OutputActor::new(Box::new(MockOutputService::new())).start();
 
@@ -585,7 +527,6 @@ mod tests {
         let test_image1 = create_test_image();
         let test_image2 = create_test_image();
         let test_detection = create_test_detection();
-        let temp_map = TemperatureMap::new(50, 50);
 
         // Send operations concurrently but separately to avoid type conflicts
         let post_result = actor.send(PostToSocialMedia {
@@ -599,11 +540,8 @@ mod tests {
             image: test_image2,
         });
 
-        let heatmap_result = actor.send(SaveHeatmapVisualization { temp_map });
-
         // Wait for all operations to complete
-        let (post_res, save_res, heatmap_res) =
-            futures::future::join3(post_result, save_result, heatmap_result).await;
+        let (post_res, save_res) = futures::future::join(post_result, save_result).await;
 
         // All operations should complete successfully
         assert!(post_res.is_ok());
@@ -611,9 +549,6 @@ mod tests {
 
         assert!(save_res.is_ok());
         assert!(save_res.unwrap().is_ok());
-
-        assert!(heatmap_res.is_ok());
-        assert!(heatmap_res.unwrap().is_ok());
     }
 
     #[actix::test]

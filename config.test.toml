@@ -14,10 +14,6 @@ minimum_x = 0
 maximum_x = 1920
 minimum_y = 0
 maximum_y = 1080
-heatmap_resolution = 100
-heatmap_decay_rate = 0.95
-heatmap_threshold = 0.5
-heatmap_save_interval = 60
 save_image_confidence = 70
 
 [[detection.ignore_points]]

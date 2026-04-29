@@ -4,7 +4,6 @@ use image::DynamicImage;
 use crate::error::NorppaliveError;
 use crate::messages::{DetectionStats, ServiceStatus, SystemHealth};
 use crate::utils::detection_utils::DetectionResult;
-use crate::utils::temperature_map::TemperatureMap;
 
 /// Abstraction layer for communication with detection and output services.
 /// This allows the same interface whether services are running as actors
@@ -16,12 +15,6 @@ pub trait MessageBus: Send + Sync {
 
     /// Save detection image to filesystem
     async fn save_detection_image(&self, request: SaveImageRequest) -> Result<(), NorppaliveError>;
-
-    /// Save heatmap visualization
-    async fn save_heatmap_visualization(
-        &self,
-        temp_map: TemperatureMap,
-    ) -> Result<(), NorppaliveError>;
 
     /// Get current detection statistics
     async fn get_detection_stats(&self) -> Result<DetectionStats, NorppaliveError>;

@@ -61,10 +61,6 @@ impl Default for Config {
                 maximum_x: 1200,
                 minimum_y: 0,
                 maximum_y: 720,
-                heatmap_resolution: 30,
-                heatmap_decay_rate: 0.9,
-                heatmap_threshold: 3.0,
-                heatmap_save_interval: 5,
                 save_image_confidence: 65,
                 minimum_post_confidence: 85,
             },
@@ -135,10 +131,6 @@ pub struct Detection {
     pub maximum_x: u32,
     pub minimum_y: u32,
     pub maximum_y: u32,
-    pub heatmap_resolution: u32,
-    pub heatmap_decay_rate: f32,
-    pub heatmap_threshold: f32,
-    pub heatmap_save_interval: i64, // How often to save heatmap images (in minutes)
     pub save_image_confidence: u8,
     pub minimum_post_confidence: u8, // Minimum confidence required to post to social media
 }

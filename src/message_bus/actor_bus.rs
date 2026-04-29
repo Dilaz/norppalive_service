@@ -5,9 +5,8 @@ use crate::actors::{DetectionActor, OutputActor, SupervisorActor};
 use crate::error::NorppaliveError;
 use crate::messages::{
     DetectionStats, GetDetectionStats, GetServiceStatus, GetSystemHealth, PostToSocialMedia,
-    SaveDetectionImage, SaveHeatmapVisualization, ServiceStatus, SystemHealth,
+    SaveDetectionImage, ServiceStatus, SystemHealth,
 };
-use crate::utils::temperature_map::TemperatureMap;
 
 use super::trait_def::{MessageBus, PostRequest, SaveImageRequest};
 
@@ -52,18 +51,6 @@ impl MessageBus for ActorMessageBus {
             detections: request.detections,
             image: request.image,
         };
-
-        self.output_actor
-            .send(msg)
-            .await
-            .map_err(|e| NorppaliveError::Other(format!("Actor communication error: {}", e)))?
-    }
-
-    async fn save_heatmap_visualization(
-        &self,
-        temp_map: TemperatureMap,
-    ) -> Result<(), NorppaliveError> {
-        let msg = SaveHeatmapVisualization { temp_map };
 
         self.output_actor
             .send(msg)

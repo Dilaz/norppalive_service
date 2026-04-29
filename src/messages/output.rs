@@ -3,7 +3,6 @@ use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::detection_utils::DetectionResult;
-use crate::utils::temperature_map::TemperatureMap;
 
 /// Messages for OutputActor and Service Actors
 
@@ -20,12 +19,6 @@ pub struct PostToSocialMedia {
 pub struct SaveDetectionImage {
     pub detections: Vec<DetectionResult>,
     pub image: DynamicImage,
-}
-
-#[derive(Message)]
-#[rtype(result = "Result<(), crate::error::NorppaliveError>")]
-pub struct SaveHeatmapVisualization {
-    pub temp_map: TemperatureMap,
 }
 
 /// Message for individual service actors

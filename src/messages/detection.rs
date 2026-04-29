@@ -42,5 +42,4 @@ pub struct DetectionStats {
     pub total_detections: u64,
     pub consecutive_detections: u32,
     pub last_detection_time: i64,
-    pub temperature_map_hotspots: bool,
 }
