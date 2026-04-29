@@ -158,7 +158,7 @@ impl StreamActor {
         let output_result = Command::new("yt-dlp")
             .args([
                 "-f",
-                "bestvideo[height<=720]",
+                "best[height<=720]",
                 "--js-runtime",
                 "bun",
                 "-g",
