@@ -23,12 +23,31 @@ pub struct DetectionResult {
     pub conf: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct DetectionApiResponse {
-    detections: Vec<DetectionResult>,
-    inference_time: f64,
-    model_type: String,
-    model_version: String,
+/// Wire shape returned by norppalive-api `POST /detect` (bare JSON array).
+/// Translated into `DetectionResult` at the HTTP boundary so the rest of the
+/// pipeline keeps its u32 box / 0-100 confidence representation.
+#[derive(Deserialize, Debug, Clone)]
+struct ApiDetection {
+    bbox: [f32; 4],
+    class_id: u32,
+    label: String,
+    confidence: f32,
+}
+
+impl From<ApiDetection> for DetectionResult {
+    fn from(d: ApiDetection) -> Self {
+        DetectionResult {
+            r#box: [
+                d.bbox[0] as u32,
+                d.bbox[1] as u32,
+                d.bbox[2] as u32,
+                d.bbox[3] as u32,
+            ],
+            cls: u8::try_from(d.class_id).unwrap_or(u8::MAX),
+            cls_name: d.label,
+            conf: (d.confidence * CONFIDENCE_MULTIPLIER).clamp(0.0, 255.0) as u8,
+        }
+    }
 }
 
 // Trait for abstraction to allow mocking
@@ -186,7 +205,7 @@ impl DetectionService {
         file_handle.read_to_end(&mut file_bytes).await?;
 
         let form = multipart::Form::new().part(
-            "file",
+            "image",
             multipart::Part::bytes(file_bytes)
                 .file_name(filename.to_string())
                 .mime_str("image/png")
@@ -248,21 +267,16 @@ impl DetectionService {
         };
 
         info!("Parsing JSON response");
-        let api_response = match serde_json::from_str::<DetectionApiResponse>(&response_text) {
-            Ok(response) => {
-                info!(
-                    "Successfully parsed API response. Inference time: {}, Model: {} {}",
-                    response.inference_time, response.model_type, response.model_version
-                );
-                response
-            }
+        let api_detections: Vec<ApiDetection> = match serde_json::from_str(&response_text) {
+            Ok(detections) => detections,
             Err(err) => {
                 error!("Failed to parse JSON response: {}", err);
                 return Err(err.into());
             }
         };
 
-        let result = api_response.detections;
+        let result: Vec<DetectionResult> =
+            api_detections.into_iter().map(DetectionResult::from).collect();
         info!("Found {} detection results", result.len());
         debug!("Detection results: {:?}", result);
 

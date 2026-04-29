@@ -8,15 +8,38 @@ lazy_static! {
         let config_path =
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
 
-        match std::fs::read_to_string(&config_path) {
+        let mut config: Config = match std::fs::read_to_string(&config_path) {
             Ok(config_content) => toml::from_str(&config_content)
                 .unwrap_or_else(|_| panic!("Failed to parse config file: {}", config_path)),
             Err(_) => {
                 // Provide a default configuration for tests or when config is missing
                 Config::default()
             }
-        }
+        };
+        config.apply_env_overrides();
+        config
     };
+}
+
+impl Config {
+    /// Override credential fields from env vars when present. Lets the
+    /// non-secret config live in a ConfigMap while secrets come from a
+    /// (Sealed)Secret mounted via `envFrom`.
+    fn apply_env_overrides(&mut self) {
+        fn env(key: &str) -> Option<String> {
+            std::env::var(key).ok().filter(|s| !s.is_empty())
+        }
+        if let Some(v) = env("MASTODON_HOST") { self.mastodon.host = v; }
+        if let Some(v) = env("MASTODON_TOKEN") { self.mastodon.token = v; }
+        if let Some(v) = env("BLUESKY_HOST") { self.bluesky.host = v; }
+        if let Some(v) = env("BLUESKY_LOGIN") { self.bluesky.login = v; }
+        if let Some(v) = env("BLUESKY_HANDLE") { self.bluesky.handle = v; }
+        if let Some(v) = env("BLUESKY_PASSWORD") { self.bluesky.password = v; }
+        if let Some(v) = env("TWITTER_TOKEN") { self.twitter.token = v; }
+        if let Some(v) = env("TWITTER_TOKEN_SECRET") { self.twitter.token_secret = v; }
+        if let Some(v) = env("TWITTER_CONSUMER_KEY") { self.twitter.consumer_key = v; }
+        if let Some(v) = env("TWITTER_CONSUMER_SECRET") { self.twitter.consumer_secret = v; }
+    }
 }
 
 impl Default for Config {

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: norppalive-service
+  namespace: norppalive
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: norppalive-service
+  template:
+    metadata:
+      labels:
+        app: norppalive-service
+    spec:
+      containers:
+        - name: norppalive-service
+          image: norppalive-service:latest
+          imagePullPolicy: Never
+          args: ["--config", "/config/config.toml"]
+          envFrom:
+            - secretRef:
+                name: norppalive-service-secrets
+          env:
+            - name: RUST_LOG
+              value: norppalive_service=info
+            - name: CONFIG_PATH
+              value: /config/config.toml
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: scratch
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: norppalive-service-config
+        - name: scratch
+          emptyDir:
+            sizeLimit: 1Gi

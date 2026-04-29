@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: norppalive-service-config
+  namespace: norppalive
+data:
+  config.toml: |
+    image_filename = "/tmp/frame.png"
+
+    [stream]
+    stream_url = "https://youtu.be/xMEI4-DVIB8"
+    only_keyframes = true
+    frame_processing_delay_ms = 100
+
+    [detection]
+    minimum_detection_percentage = 80
+    minimum_detection_frames = 5
+    api_url = "http://100.114.73.98:8080/detect"
+    ignore_points = []
+    minimum_x = 0
+    maximum_x = 1920
+    minimum_y = 0
+    maximum_y = 1080
+    heatmap_resolution = 30
+    heatmap_decay_rate = 0.9
+    heatmap_threshold = 3.0
+    heatmap_save_interval = 5
+    save_image_confidence = 65
+    minimum_post_confidence = 80
+
+    [output]
+    post_interval = 120
+    image_save_interval = 10
+    line_color = [255, 112, 32, 1]
+    text_color = [0, 0, 0, 1]
+    line_thickness = 5
+    output_file_folder = "/tmp/saved_images"
+    replace_hashtags = false
+    messages = ["Norppa on kivellä!"]
+    services = ["Mastodon", "Bluesky", "Kafka"]
+
+    [twitter]
+    token = ""
+    token_secret = ""
+    consumer_key = ""
+    consumer_secret = ""
+
+    [mastodon]
+    host = ""
+    token = ""
+
+    [bluesky]
+    host = "https://bsky.social"
+    login = ""
+    handle = ""
+    password = ""
+
+    [kafka]
+    broker = "norppalive-redpanda:9093"
+    topic = "detection"
+    detection_topic = "norppalive-detections"
+    detection_message = "Norppa dyykkaa!"
