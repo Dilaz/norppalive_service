@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libswscale6 \
     && rm -rf /var/lib/apt/lists/*
 # yt-dlp PyInstaller standalone — pinned via build arg so rebuilds are reproducible
-ARG YTDLP_VERSION=2025.10.22
+ARG YTDLP_VERSION=2026.03.17
 RUN curl -fL -o /usr/local/bin/yt-dlp \
         "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
     && chmod +x /usr/local/bin/yt-dlp \
