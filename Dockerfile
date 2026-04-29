@@ -31,20 +31,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libswresample4 \
     libswscale6 \
     && rm -rf /var/lib/apt/lists/*
-# Deno — yt-dlp 2026.03.17+ requires a JS runtime for YouTube extraction
-ARG DENO_VERSION=v2.1.4
+# Bun — yt-dlp 2026.03.17+ requires a JS runtime for YouTube; the service
+# invokes yt-dlp with `--js-runtime bun`, so install bun specifically.
+ARG BUN_VERSION=bun-v1.1.38
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
-         amd64) DENO_ARCH="x86_64-unknown-linux-gnu" ;; \
-         arm64) DENO_ARCH="aarch64-unknown-linux-gnu" ;; \
+         amd64) BUN_ARCH="bun-linux-x64" ;; \
+         arm64) BUN_ARCH="bun-linux-aarch64" ;; \
          *) echo "unsupported arch: $ARCH" && exit 1 ;; \
        esac \
-    && curl -fL -o /tmp/deno.zip \
-        "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_ARCH}.zip" \
-    && unzip /tmp/deno.zip -d /usr/local/bin/ \
-    && chmod +x /usr/local/bin/deno \
-    && rm /tmp/deno.zip \
-    && /usr/local/bin/deno --version
+    && curl -fL -o /tmp/bun.zip \
+        "https://github.com/oven-sh/bun/releases/download/${BUN_VERSION}/${BUN_ARCH}.zip" \
+    && unzip /tmp/bun.zip -d /tmp/ \
+    && mv "/tmp/${BUN_ARCH}/bun" /usr/local/bin/bun \
+    && chmod +x /usr/local/bin/bun \
+    && rm -rf /tmp/bun.zip "/tmp/${BUN_ARCH}" \
+    && /usr/local/bin/bun --version
 # yt-dlp PyInstaller standalone — pinned via build arg so rebuilds are reproducible
 ARG YTDLP_VERSION=2026.03.17
 RUN curl -fL -o /usr/local/bin/yt-dlp \
