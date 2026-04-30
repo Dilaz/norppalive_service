@@ -10,10 +10,6 @@ frame_processing_delay_ms = 100
 minimum_detection_percentage = 50
 minimum_detection_frames = 3
 api_url = "http://localhost:8080/detect"
-minimum_x = 0
-maximum_x = 1920
-minimum_y = 0
-maximum_y = 1080
 save_image_confidence = 70
 
 [[detection.ignore_points]]

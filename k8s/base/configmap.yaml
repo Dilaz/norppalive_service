@@ -17,10 +17,6 @@ data:
     minimum_detection_frames = 5
     api_url = "http://100.114.73.98:8080/detect"
     ignore_points = []
-    minimum_x = 0
-    maximum_x = 1920
-    minimum_y = 0
-    maximum_y = 1080
     save_image_confidence = 65
     minimum_post_confidence = 80
 

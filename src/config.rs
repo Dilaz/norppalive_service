@@ -57,10 +57,6 @@ impl Default for Config {
                 minimum_detection_frames: 5,
                 api_url: "http://localhost:8000/detect".to_string(),
                 ignore_points: vec![],
-                minimum_x: 0,
-                maximum_x: 1200,
-                minimum_y: 0,
-                maximum_y: 720,
                 save_image_confidence: 65,
                 minimum_post_confidence: 85,
             },
@@ -125,10 +121,6 @@ pub struct Detection {
     pub minimum_detection_frames: u32,
     pub api_url: String,
     pub ignore_points: Vec<Point>,
-    pub minimum_x: u32,
-    pub maximum_x: u32,
-    pub minimum_y: u32,
-    pub maximum_y: u32,
     pub save_image_confidence: u8,
     pub minimum_post_confidence: u8, // Minimum confidence required to post to social media
 }

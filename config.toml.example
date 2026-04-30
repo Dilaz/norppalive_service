@@ -13,10 +13,6 @@ api_url = 'http://localhost:8000/detect'
 ignore_points = [
     {x = 0, y = 0},
 ]
-minimum_x = 0
-maximum_x = 1200
-minimum_y = 0
-maximum_y = 720
 save_image_confidence = 65  # If any detection is above this confidence, save the image
 minimum_post_confidence = 85  # Minimum confidence required to post to social media (higher = fewer false positives)
 
