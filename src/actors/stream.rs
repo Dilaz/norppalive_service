@@ -160,7 +160,7 @@ impl StreamActor {
                 "-f",
                 "best[height<=720]",
                 "--js-runtimes",
-                "bun",
+                "bun:/usr/local/bin/bun",
                 "-g",
                 stream_url,
             ])
