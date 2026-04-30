@@ -50,5 +50,3 @@ password = "test_password"
 [kafka]
 broker = "localhost:9092"
 topic = "test_topic"
-detection_topic = "test_detection_topic"
-detection_message = "Test detection message" 

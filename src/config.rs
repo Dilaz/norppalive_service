@@ -94,8 +94,6 @@ impl Default for Config {
             kafka: Kafka {
                 broker: "localhost:19092".to_string(),
                 topic: "detection".to_string(),
-                detection_topic: "norppalive-detections".to_string(),
-                detection_message: "Test detection".to_string(),
             },
         }
     }
@@ -198,6 +196,4 @@ pub struct Bluesky {
 pub struct Kafka {
     pub broker: String,
     pub topic: String,
-    pub detection_topic: String,
-    pub detection_message: String,
 }

@@ -57,5 +57,3 @@ password = ""
 [kafka]
 broker = "localhost:19092"
 topic = "detection"
-detection_topic = "norppalive-detections"
-detection_message = "Norppa dyykkaa!" # Example static message for detection events

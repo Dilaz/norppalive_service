@@ -32,7 +32,18 @@ data:
     line_thickness = 5
     output_file_folder = "/tmp/saved_images"
     replace_hashtags = false
-    messages = ["Norppa on kivellä!"]
+    messages = [
+        "Norppa on kivellä! Kaikki katsomaan!\n\n#norppalive #luontolive\nhttps://wwf.fi/luontolive/norppalive/",
+        "NORPPAAAAAAH!\n\n#norppalive #luontolive\nhttps://wwf.fi/luontolive/norppalive/",
+        # "*beep boop* Sensorini ilmoittavat, että norppa on kivellä, toistan: norppa on kivellä\n\n#norppalive #luontolive",
+        "Norppa havaittu! Katso suoraa lähetystä: https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive",
+        "Norppa! Norppa! Suuntaa Norppaliveen: https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive",
+        "Norppahälytys! Norppa on näkyvissä! https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive",
+        "Norppa tuli! Katso Norppalive: https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive",
+        "Norppaa näkyvissä! Klikkaa tästä liveen: https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive",
+        "Norppa on paikalla! Liity Norppalive-seurantaan: https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive",
+        "Norppa ilmestyi! Katso Norppalive-lähetystä: https://wwf.fi/luontolive/norppalive/ #norppalive #luontolive"
+    ]
     services = ["Mastodon", "Bluesky", "Kafka"]
 
     [twitter]
@@ -54,5 +65,3 @@ data:
     [kafka]
     broker = "norppalive-redpanda:9093"
     topic = "detection"
-    detection_topic = "norppalive-detections"
-    detection_message = "Norppa dyykkaa!"
