@@ -156,14 +156,7 @@ impl StreamActor {
         }
 
         let output_result = Command::new("yt-dlp")
-            .args([
-                "-f",
-                "best[height<=720]",
-                "--js-runtimes",
-                "bun:/usr/local/bin/bun",
-                "-g",
-                stream_url,
-            ])
+            .args(["-f", "best[height<=720]", "-g", stream_url])
             .output();
 
         match output_result {
