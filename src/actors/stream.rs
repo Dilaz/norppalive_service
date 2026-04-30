@@ -159,7 +159,7 @@ impl StreamActor {
             .args([
                 "-f",
                 "best[height<=720]",
-                "--js-runtime",
+                "--js-runtimes",
                 "bun",
                 "-g",
                 stream_url,
