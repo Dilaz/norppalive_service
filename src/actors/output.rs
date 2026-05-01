@@ -1,10 +1,11 @@
 use actix::prelude::*;
 use tracing::{debug, error, info, warn};
 
-use crate::actors::names::{BLUESKY_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, TWITTER_ACTOR};
+use crate::actors::names::{
+    BLUESKY_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, ROCK_KAFKA_ACTOR, TWITTER_ACTOR,
+};
 use crate::actors::services::ServiceActor;
 use crate::actors::SupervisorActor;
-use crate::services::{BlueskyService, KafkaService, MastodonService, TwitterService};
 use crate::config::CONFIG;
 use crate::error::NorppaliveError;
 use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts};
@@ -12,6 +13,7 @@ use crate::messages::{
     DetectionCompleted, GetServiceStatus, GracefulStop, PostToSocialMedia, SaveDetectionImage,
     ServicePost, ServiceStatus,
 };
+use crate::services::{BlueskyService, KafkaService, MastodonService, TwitterService};
 use crate::utils::image_utils::draw_boxes_on_provided_image;
 use crate::utils::output::OutputService;
 use crate::utils::output::OutputServiceTrait;
@@ -23,9 +25,11 @@ pub struct OutputActor {
     bluesky_actor: Option<Addr<ServiceActor<BlueskyService>>>,
     mastodon_actor: Option<Addr<ServiceActor<MastodonService>>>,
     kafka_actor: Option<Addr<ServiceActor<KafkaService>>>,
+    rock_kafka_actor: Option<Addr<ServiceActor<KafkaService>>>,
     supervisor_actor: Option<Addr<SupervisorActor>>,
     last_post_time: i64,
     last_save_time: i64,
+    last_rock_post_time: i64,
 }
 
 impl Default for OutputActor {
@@ -36,9 +40,11 @@ impl Default for OutputActor {
             bluesky_actor: None,
             mastodon_actor: None,
             kafka_actor: None,
+            rock_kafka_actor: None,
             supervisor_actor: None,
             last_post_time: 0,
             last_save_time: 0,
+            last_rock_post_time: 0,
         }
     }
 }
@@ -71,9 +77,11 @@ impl OutputActor {
             bluesky_actor: None,
             mastodon_actor: None,
             kafka_actor: None,
+            rock_kafka_actor: None,
             supervisor_actor: None,
             last_post_time: 0,
             last_save_time: 0,
+            last_rock_post_time: 0,
         }
     }
 
@@ -83,6 +91,7 @@ impl OutputActor {
         bluesky_actor: Option<Addr<ServiceActor<BlueskyService>>>,
         mastodon_actor: Option<Addr<ServiceActor<MastodonService>>>,
         kafka_actor: Option<Addr<ServiceActor<KafkaService>>>,
+        rock_kafka_actor: Option<Addr<ServiceActor<KafkaService>>>,
         supervisor_actor: Option<Addr<SupervisorActor>>,
     ) -> Self {
         Self {
@@ -91,9 +100,11 @@ impl OutputActor {
             bluesky_actor,
             mastodon_actor,
             kafka_actor,
+            rock_kafka_actor,
             supervisor_actor,
             last_post_time: 0,
             last_save_time: 0,
+            last_rock_post_time: 0,
         }
     }
 
@@ -121,6 +132,17 @@ impl OutputActor {
             timestamp - self.last_save_time >= CONFIG.output.image_save_interval * 60;
         // Only save if confidence meets the save_image_confidence threshold
         let confidence_high_enough = max_confidence >= CONFIG.detection.save_image_confidence;
+
+        enough_time_passed && confidence_high_enough
+    }
+
+    fn should_post_rock(&self, timestamp: i64, max_confidence: u8) -> bool {
+        // Single-frame, low-bar pathway: posts to a separate Kafka topic so the
+        // Discord bot can surface "rock" detections without waiting for the
+        // multi-frame confirmation required for a real norppa announcement.
+        let enough_time_passed =
+            timestamp - self.last_rock_post_time >= CONFIG.kafka.rock_post_interval * 60;
+        let confidence_high_enough = max_confidence >= CONFIG.detection.minimum_post_confidence;
 
         enough_time_passed && confidence_high_enough
     }
@@ -220,10 +242,12 @@ impl Handler<DetectionCompleted> for OutputActor {
         let should_save = self.should_save_image(msg.timestamp, max_confidence);
         let should_post =
             self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence);
+        let should_post_rock =
+            self.rock_kafka_actor.is_some() && self.should_post_rock(msg.timestamp, max_confidence);
 
         // Early return if we don't need to do anything
-        if !should_save && !should_post {
-            debug!("Neither save nor post conditions met, skipping");
+        if !should_save && !should_post && !should_post_rock {
+            debug!("No save/post/rock conditions met, skipping");
             return;
         }
 
@@ -251,32 +275,31 @@ impl Handler<DetectionCompleted> for OutputActor {
             }
         };
 
-        // Save the annotated image if conditions are met
+        // KafkaService reads the image back from disk, so write it once now if
+        // anything downstream needs it (save, regular post, or rock post).
+        let mut image_on_disk = false;
         if should_save {
             self.last_save_time = msg.timestamp;
-            if let Err(e) = annotated_image.save(&annotated_path) {
-                warn!("Failed to save detection image: {}", e);
-            } else {
-                info!("Detection image saved to: {}", annotated_path);
+        }
+        if should_save || should_post || should_post_rock {
+            match annotated_image.save(&annotated_path) {
+                Ok(()) => {
+                    image_on_disk = true;
+                    info!("Detection image saved to: {}", annotated_path);
+                }
+                Err(e) => {
+                    warn!("Failed to save detection image: {}", e);
+                }
             }
         }
 
         // Post to social media if conditions are met
-        if should_post {
+        if should_post && image_on_disk {
             self.last_post_time = msg.timestamp;
             info!(
                 "Posting to social media: {} detections (max conf: {}%) after {} consecutive frames",
                 detection_count, max_confidence, msg.consecutive_detections
             );
-
-            // If we didn't save earlier, save now for posting
-            if !should_save {
-                if let Err(e) = annotated_image.save(&annotated_path) {
-                    warn!("Failed to save annotated image for posting: {}", e);
-                    return;
-                }
-                info!("Created annotated image for posting: {}", annotated_path);
-            }
 
             // Use configured message or fallback to default
             let message = CONFIG
@@ -293,7 +316,7 @@ impl Handler<DetectionCompleted> for OutputActor {
             // Send to all connected service actors
             let service_post = ServicePost {
                 message: message.clone(),
-                image_path: annotated_path,
+                image_path: annotated_path.clone(),
                 service_name: "all".to_string(),
             };
 
@@ -308,6 +331,23 @@ impl Handler<DetectionCompleted> for OutputActor {
             }
             if let Some(ref kafka) = self.kafka_actor {
                 kafka.do_send(service_post);
+            }
+        }
+
+        // Single-frame "rock" pathway: independent of consecutive-frame gating
+        // and routed to its own Kafka topic for the Discord bot to surface.
+        if should_post_rock && image_on_disk {
+            self.last_rock_post_time = msg.timestamp;
+            info!(
+                "Publishing rock detection to Kafka topic '{}' (max conf: {}%)",
+                CONFIG.kafka.detection_topic, max_confidence
+            );
+            if let Some(ref rock_kafka) = self.rock_kafka_actor {
+                rock_kafka.do_send(ServicePost {
+                    message: CONFIG.kafka.detection_message.clone(),
+                    image_path: annotated_path,
+                    service_name: "rock_kafka".to_string(),
+                });
             }
         }
     }
@@ -401,6 +441,26 @@ impl Handler<ActorRestarted> for OutputActor {
                             KAFKA_ACTOR
                         );
                         self.kafka_actor = None;
+                    }
+                }
+            }
+            ROCK_KAFKA_ACTOR => {
+                match msg
+                    .new_address
+                    .downcast_ref::<Addr<ServiceActor<KafkaService>>>()
+                    .cloned()
+                {
+                    Some(addr) => {
+                        info!("Updated RockKafkaActor address after restart");
+                        self.rock_kafka_actor = Some(addr);
+                    }
+                    None => {
+                        error!(
+                            "Type mismatch: Failed to downcast {} address. \
+                             Service will be disabled until next restart.",
+                            ROCK_KAFKA_ACTOR
+                        );
+                        self.rock_kafka_actor = None;
                     }
                 }
             }

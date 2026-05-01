@@ -14,8 +14,8 @@ pub mod services;
 pub mod utils;
 
 use crate::actors::names::{
-    BLUESKY_ACTOR, DETECTION_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, OUTPUT_ACTOR, STREAM_ACTOR,
-    TWITTER_ACTOR,
+    BLUESKY_ACTOR, DETECTION_ACTOR, KAFKA_ACTOR, MASTODON_ACTOR, OUTPUT_ACTOR, ROCK_KAFKA_ACTOR,
+    STREAM_ACTOR, TWITTER_ACTOR,
 };
 use crate::config::{Service, CONFIG};
 use crate::messages::supervisor::{RegisterActor, SystemShutdown};
@@ -88,6 +88,23 @@ fn main() -> Result<()> {
         } else {
             None
         };
+        // Rock pathway: a second Kafka producer bound to the configured rocks
+        // topic, fired on single-frame ≥minimum_post_confidence detections.
+        let rock_kafka_actor = if is_service_enabled(&Service::Kafka) {
+            info!(
+                "Starting Rock Kafka service on topic '{}'",
+                CONFIG.kafka.detection_topic
+            );
+            Some(
+                ServiceActor::new(KafkaService::with_topic_and_type(
+                    CONFIG.kafka.detection_topic.clone(),
+                    Some("rock".to_string()),
+                ))
+                .start(),
+            )
+        } else {
+            None
+        };
 
         // Start OutputActor with service actors and supervisor for restart notifications
         let output_actor = OutputActor::with_services(
@@ -96,6 +113,7 @@ fn main() -> Result<()> {
             bluesky_actor.clone(),
             mastodon_actor.clone(),
             kafka_actor.clone(),
+            rock_kafka_actor.clone(),
             Some(supervisor.clone()),
         )
         .start();
@@ -114,28 +132,42 @@ fn main() -> Result<()> {
 
         // Only register service actors that are enabled in config
         if twitter_actor.is_some() {
-            let twitter_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(ServiceActor::new(TwitterService).start())
-            });
+            let twitter_factory: ActorFactoryFn =
+                Arc::new(|| Arc::new(ServiceActor::new(TwitterService).start()));
             supervisor.do_send(RegisterActor::with_factory(TWITTER_ACTOR, twitter_factory));
         }
         if bluesky_actor.is_some() {
-            let bluesky_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(ServiceActor::new(BlueskyService::default()).start())
-            });
+            let bluesky_factory: ActorFactoryFn =
+                Arc::new(|| Arc::new(ServiceActor::new(BlueskyService::default()).start()));
             supervisor.do_send(RegisterActor::with_factory(BLUESKY_ACTOR, bluesky_factory));
         }
         if mastodon_actor.is_some() {
-            let mastodon_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(ServiceActor::new(MastodonService).start())
-            });
-            supervisor.do_send(RegisterActor::with_factory(MASTODON_ACTOR, mastodon_factory));
+            let mastodon_factory: ActorFactoryFn =
+                Arc::new(|| Arc::new(ServiceActor::new(MastodonService).start()));
+            supervisor.do_send(RegisterActor::with_factory(
+                MASTODON_ACTOR,
+                mastodon_factory,
+            ));
         }
         if kafka_actor.is_some() {
-            let kafka_factory: ActorFactoryFn = Arc::new(|| {
-                Arc::new(ServiceActor::new(KafkaService::default()).start())
-            });
+            let kafka_factory: ActorFactoryFn =
+                Arc::new(|| Arc::new(ServiceActor::new(KafkaService::default()).start()));
             supervisor.do_send(RegisterActor::with_factory(KAFKA_ACTOR, kafka_factory));
+        }
+        if rock_kafka_actor.is_some() {
+            let rock_kafka_factory: ActorFactoryFn = Arc::new(|| {
+                Arc::new(
+                    ServiceActor::new(KafkaService::with_topic_and_type(
+                        CONFIG.kafka.detection_topic.clone(),
+                        Some("rock".to_string()),
+                    ))
+                    .start(),
+                )
+            });
+            supervisor.do_send(RegisterActor::with_factory(
+                ROCK_KAFKA_ACTOR,
+                rock_kafka_factory,
+            ));
         }
 
         // Register StreamActor with factory for auto-restart capability

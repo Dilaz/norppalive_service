@@ -13,11 +13,22 @@ use tracing::{debug, info};
 #[derive(Clone)]
 pub struct KafkaService {
     pub topic: String,
+    pub detection_type: Option<String>,
     pub producer: FutureProducer,
 }
 
 impl Default for KafkaService {
     fn default() -> Self {
+        Self::with_topic(CONFIG.kafka.topic.clone())
+    }
+}
+
+impl KafkaService {
+    pub fn with_topic(topic: String) -> Self {
+        Self::with_topic_and_type(topic, None)
+    }
+
+    pub fn with_topic_and_type(topic: String, detection_type: Option<String>) -> Self {
         let mut client_config = ClientConfig::new();
         client_config.set("bootstrap.servers", &CONFIG.kafka.broker);
 
@@ -30,7 +41,8 @@ impl Default for KafkaService {
         let producer: FutureProducer = client_config.create().expect("Producer creation error");
 
         Self {
-            topic: CONFIG.kafka.topic.clone(),
+            topic,
+            detection_type,
             producer,
         }
     }
@@ -44,10 +56,17 @@ impl SocialMediaService for KafkaService {
         debug!("Message: {}", message);
 
         let base64_encoded = base64::engine::general_purpose::STANDARD.encode(image_data);
-        let payload = json!({
-            "message": message,
-            "image": base64_encoded
-        })
+        let payload = match &self.detection_type {
+            Some(dt) => json!({
+                "message": message,
+                "image": base64_encoded,
+                "detection_type": dt,
+            }),
+            None => json!({
+                "message": message,
+                "image": base64_encoded,
+            }),
+        }
         .to_string();
 
         let res = self
@@ -81,6 +100,7 @@ mod tests {
         // Simple test that doesn't require actual Kafka connection
         let service = KafkaService {
             topic: "test_topic".to_string(),
+            detection_type: None,
             producer: {
                 let mut client_config = ClientConfig::new();
                 client_config.set("bootstrap.servers", "localhost:9092");

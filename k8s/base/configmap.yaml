@@ -61,3 +61,6 @@ data:
     [kafka]
     broker = "norppalive-redpanda:9093"
     topic = "detection"
+    detection_topic = "rocks"
+    detection_message = "Norppa dyykkaa!"
+    rock_post_interval = 10

@@ -53,3 +53,6 @@ password = ""
 [kafka]
 broker = "localhost:19092"
 topic = "detection"
+detection_topic = "rocks"               # Topic for single-frame "rock" detections
+detection_message = "Norppa dyykkaa!"   # Static message used for rock detections
+rock_post_interval = 10                 # Minutes between rock posts

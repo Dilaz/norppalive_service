@@ -29,16 +29,36 @@ impl Config {
         fn env(key: &str) -> Option<String> {
             std::env::var(key).ok().filter(|s| !s.is_empty())
         }
-        if let Some(v) = env("MASTODON_HOST") { self.mastodon.host = v; }
-        if let Some(v) = env("MASTODON_TOKEN") { self.mastodon.token = v; }
-        if let Some(v) = env("BLUESKY_HOST") { self.bluesky.host = v; }
-        if let Some(v) = env("BLUESKY_LOGIN") { self.bluesky.login = v; }
-        if let Some(v) = env("BLUESKY_HANDLE") { self.bluesky.handle = v; }
-        if let Some(v) = env("BLUESKY_PASSWORD") { self.bluesky.password = v; }
-        if let Some(v) = env("TWITTER_TOKEN") { self.twitter.token = v; }
-        if let Some(v) = env("TWITTER_TOKEN_SECRET") { self.twitter.token_secret = v; }
-        if let Some(v) = env("TWITTER_CONSUMER_KEY") { self.twitter.consumer_key = v; }
-        if let Some(v) = env("TWITTER_CONSUMER_SECRET") { self.twitter.consumer_secret = v; }
+        if let Some(v) = env("MASTODON_HOST") {
+            self.mastodon.host = v;
+        }
+        if let Some(v) = env("MASTODON_TOKEN") {
+            self.mastodon.token = v;
+        }
+        if let Some(v) = env("BLUESKY_HOST") {
+            self.bluesky.host = v;
+        }
+        if let Some(v) = env("BLUESKY_LOGIN") {
+            self.bluesky.login = v;
+        }
+        if let Some(v) = env("BLUESKY_HANDLE") {
+            self.bluesky.handle = v;
+        }
+        if let Some(v) = env("BLUESKY_PASSWORD") {
+            self.bluesky.password = v;
+        }
+        if let Some(v) = env("TWITTER_TOKEN") {
+            self.twitter.token = v;
+        }
+        if let Some(v) = env("TWITTER_TOKEN_SECRET") {
+            self.twitter.token_secret = v;
+        }
+        if let Some(v) = env("TWITTER_CONSUMER_KEY") {
+            self.twitter.consumer_key = v;
+        }
+        if let Some(v) = env("TWITTER_CONSUMER_SECRET") {
+            self.twitter.consumer_secret = v;
+        }
     }
 }
 
@@ -90,6 +110,9 @@ impl Default for Config {
             kafka: Kafka {
                 broker: "localhost:19092".to_string(),
                 topic: "detection".to_string(),
+                detection_topic: "rocks".to_string(),
+                detection_message: "Norppa dyykkaa!".to_string(),
+                rock_post_interval: 10,
             },
         }
     }
@@ -188,4 +211,7 @@ pub struct Bluesky {
 pub struct Kafka {
     pub broker: String,
     pub topic: String,
+    pub detection_topic: String,
+    pub detection_message: String,
+    pub rock_post_interval: i64,
 }

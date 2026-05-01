@@ -46,3 +46,6 @@ password = "test_password"
 [kafka]
 broker = "localhost:9092"
 topic = "test_topic"
+detection_topic = "test_rocks"
+detection_message = "test rock"
+rock_post_interval = 10
