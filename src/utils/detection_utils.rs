@@ -232,8 +232,10 @@ impl DetectionService {
             }
         };
 
-        let result: Vec<DetectionResult> =
-            api_detections.into_iter().map(DetectionResult::from).collect();
+        let result: Vec<DetectionResult> = api_detections
+            .into_iter()
+            .map(DetectionResult::from)
+            .collect();
         info!("Found {} detection results", result.len());
         debug!("Detection results: {:?}", result);
 

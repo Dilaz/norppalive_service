@@ -5,10 +5,7 @@ use norppalive_service::actors::services::ServiceActor;
 use norppalive_service::messages::GetServiceStatus;
 
 #[cfg(feature = "test-utils")]
-use norppalive_service::services::{
-    generic::test_mocks::MockMockSocialMedia,
-    ServiceType,
-};
+use norppalive_service::services::{generic::test_mocks::MockMockSocialMedia, ServiceType};
 
 #[allow(dead_code)]
 fn create_test_image_file() -> Result<tempfile::NamedTempFile, std::io::Error> {
@@ -252,7 +249,8 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Twitter");
-        let twitter_actor = ServiceActor::new(Into::<ServiceType>::into(mock_twitter_service)).start();
+        let twitter_actor =
+            ServiceActor::new(Into::<ServiceType>::into(mock_twitter_service)).start();
 
         // Mastodon
         let mut mock_mastodon_service = MockMockSocialMedia::new();
@@ -260,7 +258,8 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Mastodon");
-        let mastodon_actor = ServiceActor::new(Into::<ServiceType>::into(mock_mastodon_service)).start();
+        let mastodon_actor =
+            ServiceActor::new(Into::<ServiceType>::into(mock_mastodon_service)).start();
 
         // Bluesky
         let mut mock_bluesky_service = MockMockSocialMedia::new();
@@ -268,7 +267,8 @@ async fn test_all_service_actors_basic_functionality() {
             .expect_name()
             .times(1)
             .returning(|| "Bluesky");
-        let bluesky_actor = ServiceActor::new(Into::<ServiceType>::into(mock_bluesky_service)).start();
+        let bluesky_actor =
+            ServiceActor::new(Into::<ServiceType>::into(mock_bluesky_service)).start();
 
         // Kafka
         let mut mock_kafka_service = MockMockSocialMedia::new();

@@ -47,6 +47,16 @@ ffmpeg-next = "8.0.0"
 
 [features]
 test-utils = ["dep:mockall"]
+poster = []
+
+[[bin]]
+name = "poster"
+path = "src/bin/poster.rs"
+required-features = ["poster"]
+
+[[bin]]
+name = "norppalive_service"
+path = "src/main.rs"
 
 # Added section for integration tests to enable features
 [[test]]
