@@ -8,7 +8,7 @@ resources:
 images:
   - name: norppalive-service
     newName: ghcr.io/dilaz/norppalive-service
-    newTag: sha-9cc4772efa449f6ad9144805ef2ded3ca2242035
+    newTag: sha-f784d3e195c3494c21ff7e07311b8c1e78be1f9f
 
 patches:
   - path: deployment-patch.yaml
