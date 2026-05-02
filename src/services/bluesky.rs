@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
+use crate::utils::bluesky_facets::build_facets;
 use crate::{config::CONFIG, error::NorppaliveError};
 
 use super::SocialMediaService;
@@ -118,12 +119,19 @@ impl SocialMediaService for BlueskyService {
                         ])
                     }))?;
 
-                    std::collections::BTreeMap::from([
+                    let mut record_fields = std::collections::BTreeMap::from([
                         ("$type".to_string(), post_type),
                         ("text".to_string(), text),
                         ("createdAt".to_string(), created_at),
                         ("embed".to_string(), embed_map),
-                    ])
+                    ]);
+                    if let Some(facets_ipld) = build_facets(message) {
+                        record_fields.insert(
+                            "facets".to_string(),
+                            DataModel::try_from(facets_ipld)?,
+                        );
+                    }
+                    record_fields
                 }),
                 rkey: Option::None,
                 swap_commit: Option::None,

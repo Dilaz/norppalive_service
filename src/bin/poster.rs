@@ -27,6 +27,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use norppalive_service::config::{Service, CONFIG};
 use norppalive_service::error::NorppaliveError;
+use norppalive_service::utils::bluesky_facets::build_facets;
 use norppalive_service::services::{KafkaService, MastodonService, SocialMediaService};
 
 const BLUESKY_COLLECTION_POST: &str = "app.bsky.feed.post";
@@ -451,6 +452,9 @@ async fn post_to_bluesky(
     ]);
     if let Some(embed_ipld) = embed_ipld {
         record_fields.insert("embed".into(), DataModel::try_from(embed_ipld)?);
+    }
+    if let Some(facets_ipld) = build_facets(message) {
+        record_fields.insert("facets".into(), DataModel::try_from(facets_ipld)?);
     }
 
     let record_data = Object::<InputData> {
