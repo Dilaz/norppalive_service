@@ -79,6 +79,7 @@ impl Default for Config {
                 ignore_points: vec![],
                 save_image_confidence: 65,
                 minimum_post_confidence: 85,
+                maximum_detection_area: None,
             },
             output: Output {
                 post_interval: 120,
@@ -146,6 +147,8 @@ pub struct Detection {
     pub ignore_points: Vec<Point>,
     pub save_image_confidence: u8,
     pub minimum_post_confidence: u8, // Minimum confidence required to post to social media
+    #[serde(default)]
+    pub maximum_detection_area: Option<u32>,
 }
 
 #[derive(Deserialize, Debug)]

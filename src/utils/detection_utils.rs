@@ -260,6 +260,14 @@ impl DetectionService {
         detection_result
             .iter()
             .filter(|detection| detection.conf > CONFIG.detection.minimum_detection_percentage)
+            .filter(|detection| match CONFIG.detection.maximum_detection_area {
+                None => true,
+                Some(max_area) => {
+                    let w = detection.r#box[2].saturating_sub(detection.r#box[0]);
+                    let h = detection.r#box[3].saturating_sub(detection.r#box[1]);
+                    w.saturating_mul(h) <= max_area
+                }
+            })
             .filter(|detection| {
                 !CONFIG.detection.ignore_points.iter().any(|ignore_point| {
                     let x = ignore_point.x;

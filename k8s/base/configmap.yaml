@@ -19,6 +19,7 @@ data:
     ignore_points = []
     save_image_confidence = 65
     minimum_post_confidence = 85
+    maximum_detection_area = 80000
 
     [output]
     post_interval = 120
