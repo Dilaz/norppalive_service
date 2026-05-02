@@ -18,7 +18,7 @@ data:
     api_url = "http://100.114.73.98:8080/detect"
     ignore_points = []
     save_image_confidence = 65
-    minimum_post_confidence = 80
+    minimum_post_confidence = 85
 
     [output]
     post_interval = 120
