@@ -227,9 +227,21 @@ impl Handler<DetectionCompleted> for OutputActor {
         let detection_count = msg.detections.len();
         let max_confidence = msg.detections.iter().map(|d| d.conf).max().unwrap_or(0);
 
+        // Social-media / main-Kafka announcements are reserved for confirmed
+        // norppa sightings. Other classes (joutsen, lintu) only ever flow to
+        // the rocks topic, which the Discord bot surfaces as a low-bar ping.
+        let has_norppa = msg.detections.iter().any(|d| d.cls_name == "norppa");
+        let norppa_max_confidence = msg
+            .detections
+            .iter()
+            .filter(|d| d.cls_name == "norppa")
+            .map(|d| d.conf)
+            .max()
+            .unwrap_or(0);
+
         info!(
-            "DetectionCompleted received: {} detections (max conf: {}%), {} consecutive, timestamp: {}",
-            detection_count, max_confidence, msg.consecutive_detections, msg.timestamp
+            "DetectionCompleted received: {} detections (max conf: {}%, norppa max: {}%), {} consecutive, timestamp: {}",
+            detection_count, max_confidence, norppa_max_confidence, msg.consecutive_detections, msg.timestamp
         );
 
         // Only process if there are detections
@@ -240,8 +252,12 @@ impl Handler<DetectionCompleted> for OutputActor {
 
         // Determine if we need to save or post
         let should_save = self.should_save_image(msg.timestamp, max_confidence);
-        let should_post =
-            self.should_post(msg.consecutive_detections, msg.timestamp, max_confidence);
+        let should_post = has_norppa
+            && self.should_post(
+                msg.consecutive_detections,
+                msg.timestamp,
+                norppa_max_confidence,
+            );
         let should_post_rock =
             self.rock_kafka_actor.is_some() && self.should_post_rock(msg.timestamp, max_confidence);
 
