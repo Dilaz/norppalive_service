@@ -44,12 +44,7 @@ impl From<ApiDetection> for DetectionResult {
                 d.bbox[3] as u32,
             ],
             cls: u8::try_from(d.class_id).unwrap_or(u8::MAX),
-            // TEMP FIX: detection API has norppa/lintu labels swapped
-            cls_name: match d.label.as_str() {
-                "norppa" => "lintu".to_string(),
-                "lintu" => "norppa".to_string(),
-                other => other.to_string(),
-            },
+            cls_name: d.label,
             conf: (d.confidence * CONFIDENCE_MULTIPLIER).clamp(0.0, 255.0) as u8,
         }
     }
