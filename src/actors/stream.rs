@@ -158,7 +158,7 @@ impl StreamActor {
         // yt-dlp always rewrites the --cookies file on exit; the SealedSecret mount is
         // read-only, so copy into writable scratch first.
         const RUNTIME_COOKIES: &str = "/tmp/yt-cookies-runtime.txt";
-        let mut args: Vec<&str> = vec!["-f", "best[height<=720]"];
+        let mut args: Vec<&str> = vec!["-f", "best[height<=720]", "--js-runtimes", "deno"];
         if let Some(src) = CONFIG.stream.cookies_path.as_deref() {
             if std::path::Path::new(src).exists() {
                 match std::fs::copy(src, RUNTIME_COOKIES).and_then(|_| {
