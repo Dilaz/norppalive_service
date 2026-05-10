@@ -45,10 +45,11 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && chmod +x /usr/local/bin/deno \
     && rm -rf /tmp/deno.zip \
     && /usr/local/bin/deno --version
-# yt-dlp PyInstaller standalone — pinned via build arg so rebuilds are reproducible
-ARG YTDLP_VERSION=2026.03.17
+# yt-dlp PyInstaller standalone — pinned via build arg so rebuilds are reproducible.
+# Tracks the nightly channel (yt-dlp-nightly-builds) — extractor fixes for YouTube land here first.
+ARG YTDLP_VERSION=2026.05.05.233942
 RUN curl -fL -o /usr/local/bin/yt-dlp \
-        "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
+        "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
     && chmod +x /usr/local/bin/yt-dlp \
     && /usr/local/bin/yt-dlp --version
 RUN useradd --system --create-home --uid 1000 norppa
