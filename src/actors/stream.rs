@@ -155,9 +155,21 @@ impl StreamActor {
             return Ok(stream_url.to_string());
         }
 
-        let output_result = Command::new("yt-dlp")
-            .args(["-f", "best[height<=720]", "-g", stream_url])
-            .output();
+        let mut args: Vec<&str> = vec!["-f", "best[height<=720]"];
+        if let Some(path) = CONFIG.stream.cookies_path.as_deref() {
+            if std::path::Path::new(path).exists() {
+                args.extend(["--cookies", path]);
+            } else {
+                info!(
+                    target: "stream",
+                    "stream.cookies_path is set ({}) but the file does not exist; running yt-dlp without --cookies",
+                    path
+                );
+            }
+        }
+        args.extend(["-g", stream_url]);
+
+        let output_result = Command::new("yt-dlp").args(&args).output();
 
         match output_result {
             Ok(output) => {

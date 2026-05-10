@@ -71,6 +71,7 @@ impl Default for Config {
                 only_keyframes: true,
                 max_frames: None,
                 frame_processing_delay_ms: 100,
+                cookies_path: None,
             },
             detection: Detection {
                 minimum_detection_percentage: 75,
@@ -137,6 +138,8 @@ pub struct Stream {
     pub only_keyframes: bool,
     pub max_frames: Option<u64>, // Optional limit on number of frames to process
     pub frame_processing_delay_ms: u64, // Minimum interval between frame processing in milliseconds
+    #[serde(default)]
+    pub cookies_path: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]

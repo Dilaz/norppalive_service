@@ -4,6 +4,7 @@ namespace: norppalive
 resources:
   - ../../base
   - sealed-secret.yaml
+  - sealed-yt-cookies.yaml
 
 images:
   - name: norppalive-service

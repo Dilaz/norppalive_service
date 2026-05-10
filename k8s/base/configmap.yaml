@@ -11,6 +11,7 @@ data:
     stream_url = "https://youtu.be/xMEI4-DVIB8"
     only_keyframes = true
     frame_processing_delay_ms = 100
+    cookies_path = "/secrets/yt/cookies.txt"
 
     [detection]
     minimum_detection_percentage = 80
