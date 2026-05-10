@@ -104,6 +104,16 @@ pub struct StreamActor {
     shutdown_signal: Option<Arc<AtomicBool>>,
     is_processing_task_running: bool,
     processing_task_handle: Option<JoinHandle<()>>,
+    /// True if the most recently resolved source is a livestream. Set via the
+    /// init oneshot's success payload and used by Task 6 to decide whether to
+    /// refetch on session end.
+    #[allow(dead_code)]
+    is_livestream: bool,
+    /// Number of consecutive failed refetch attempts. Reset to 0 on a
+    /// successful session start (via `SessionStarted`). Used by Task 6 to
+    /// drive the backoff schedule and the giveup cap.
+    #[allow(dead_code)]
+    consecutive_refetch_failures: u32,
 }
 
 impl Actor for StreamActor {
@@ -157,7 +167,7 @@ impl StreamActor {
         &mut self,
         ctx: &mut Context<Self>,
         stream_url: String,
-        init_signal: oneshot::Sender<Result<(), NorppaliveError>>,
+        init_signal: oneshot::Sender<Result<bool, NorppaliveError>>,
     ) {
         let own_addr = ctx.address();
 
@@ -295,16 +305,20 @@ impl StreamActor {
         }
     }
 
-    /// Sends initialization status via the oneshot channel
+    /// Sends initialization status via the oneshot channel.
+    ///
+    /// The success payload carries `is_live` so the actor can record whether
+    /// the resolved source is a livestream without touching `&mut self` from
+    /// the blocking thread.
     fn send_init_status(
-        sender: Option<oneshot::Sender<Result<(), NorppaliveError>>>,
-        result: &Result<(), NorppaliveError>,
+        sender: Option<oneshot::Sender<Result<bool, NorppaliveError>>>,
+        result: &Result<bool, NorppaliveError>,
     ) {
         if let Some(s) = sender {
-            let status = result
-                .as_ref()
-                .map(|_| ())
-                .map_err(|err| err.clone_for_error_reporting());
+            let status = match result {
+                Ok(b) => Ok(*b),
+                Err(err) => Err(err.clone_for_error_reporting()),
+            };
             if let Err(e) = s.send(status) {
                 error!(target: "stream", "Failed to send init status: {:?}. Receiver likely dropped.", e);
             }
@@ -314,7 +328,7 @@ impl StreamActor {
     /// Initialize FFmpeg and open the stream, returning decoder and scaler
     fn init_ffmpeg_stream(
         stream_url: String,
-        init_sender: &mut Option<oneshot::Sender<Result<(), NorppaliveError>>>,
+        init_sender: &mut Option<oneshot::Sender<Result<bool, NorppaliveError>>>,
     ) -> Result<
         (
             ffmpeg::format::context::Input,
@@ -332,7 +346,9 @@ impl StreamActor {
         }
         ffmpeg::log::set_level(ffmpeg::log::Level::Quiet);
 
-        // Resolve the actual stream URL (may need yt-dlp for YouTube URLs)
+        // Resolve the actual stream URL (may need yt-dlp for YouTube URLs).
+        // Keep `resolved` alive through the success-send so we can report
+        // `is_live` back to the actor on the init oneshot.
         let resolved = if stream_url.starts_with("https://") {
             match Self::get_stream_url(&stream_url) {
                 Ok(r) => r,
@@ -348,18 +364,16 @@ impl StreamActor {
                 is_live: false,
             }
         };
-        let actual_url = resolved.url;
-        // `resolved.is_live` is not used yet; Task 5 wires it to the actor state.
 
-        info!(target: "stream", "Attempting to open FFmpeg input for URL: {}", actual_url);
-        let ictx = match input(&actual_url) {
+        info!(target: "stream", "Attempting to open FFmpeg input for URL: {}", &resolved.url);
+        let ictx = match input(&resolved.url) {
             Ok(ctx) => {
-                info!(target: "stream", "Successfully opened FFmpeg input for: {}", actual_url);
-                Self::send_init_status(init_sender.take(), &Ok(()));
+                info!(target: "stream", "Successfully opened FFmpeg input for: {}", &resolved.url);
+                Self::send_init_status(init_sender.take(), &Ok(resolved.is_live));
                 ctx
             }
             Err(e) => {
-                error!(target: "stream", "Failed to open FFmpeg input for {}: {}", actual_url, e);
+                error!(target: "stream", "Failed to open FFmpeg input for {}: {}", &resolved.url, e);
                 let err = NorppaliveError::from(e);
                 Self::send_init_status(init_sender.take(), &Err(err.clone_for_error_reporting()));
                 return Err(err);
@@ -367,8 +381,8 @@ impl StreamActor {
         };
 
         let input_stream = ictx.streams().best(Type::Video).ok_or_else(|| {
-            error!(target: "stream", "Could not find video stream in {}", actual_url);
-            NorppaliveError::Other(format!("Could not find video stream in {}", actual_url))
+            error!(target: "stream", "Could not find video stream in {}", &resolved.url);
+            NorppaliveError::Other(format!("Could not find video stream in {}", &resolved.url))
         })?;
 
         let video_stream_index = input_stream.index();
@@ -500,7 +514,7 @@ impl StreamActor {
         stream_url: String,
         stream_actor_addr: Addr<StreamActor>,
         shutdown_signal: Arc<AtomicBool>,
-        init_signal: Option<oneshot::Sender<Result<(), NorppaliveError>>>,
+        init_signal: Option<oneshot::Sender<Result<bool, NorppaliveError>>>,
     ) -> Result<(), NorppaliveError> {
         info!(target: "stream", "process_stream_blocking started. Initializing FFmpeg and stream input.");
 
@@ -749,7 +763,7 @@ impl Handler<StartStream> for StreamActor {
         self.latest_frame_buffer = None;
         self.detector_ready = true; // Reset detector state
 
-        let (tx, rx) = oneshot::channel::<Result<(), NorppaliveError>>();
+        let (tx, rx) = oneshot::channel::<Result<bool, NorppaliveError>>();
 
         // The actual stream processing will be started by `start_stream_processing` which itself spawns a future.
         // We need to pass `tx` into that spawned future.
@@ -759,8 +773,12 @@ impl Handler<StartStream> for StreamActor {
 
         Box::pin(async move {
             match rx.await {
-                Ok(Ok(())) => {
-                    info!("Stream initialization reported success by processing task.");
+                Ok(Ok(is_live)) => {
+                    info!(
+                        "Stream initialization reported success by processing task (is_live={}).",
+                        is_live
+                    );
+                    actor_address.do_send(SessionStarted { is_live });
                     Ok(())
                 }
                 Ok(Err(e)) => {
@@ -784,6 +802,28 @@ impl Handler<StartStream> for StreamActor {
 #[derive(Message)]
 #[rtype(result = "()")]
 struct StreamInitializationFailed;
+
+/// Internal: a fresh FFmpeg session has successfully been opened. Carries the
+/// liveness reported by yt-dlp so `StreamActor` can branch on session end.
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SessionStarted {
+    pub is_live: bool,
+}
+
+impl Handler<SessionStarted> for StreamActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SessionStarted, _ctx: &mut Context<Self>) -> Self::Result {
+        self.is_livestream = msg.is_live;
+        self.consecutive_refetch_failures = 0;
+        info!(
+            target: "stream",
+            "Session started: is_livestream={}",
+            msg.is_live
+        );
+    }
+}
 
 impl Handler<StreamInitializationFailed> for StreamActor {
     type Result = ();
