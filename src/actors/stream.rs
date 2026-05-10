@@ -1001,18 +1001,16 @@ impl Handler<RefetchAndRestart> for StreamActor {
                     actor_address.do_send(SessionStarted { is_live });
                 }
                 Ok(Err(e)) => {
+                    // The start_stream_processing wrapper already forwards an
+                    // InternalProcessingComplete{Err(_)} on init failure, so we
+                    // only log here to avoid double-counting refetch failures.
                     error!(target: "stream", "Refetch init failed: {}", e);
-                    // Treat as a session-end with error so the existing branching
-                    // handles backoff + cap uniformly.
-                    actor_address.do_send(InternalProcessingComplete { result: Err(e) });
                 }
                 Err(_) => {
+                    // The wrapper still sends InternalProcessingComplete even if
+                    // init_ffmpeg_stream panicked (via spawn_blocking's JoinError
+                    // handling), so just log; do not re-send.
                     error!(target: "stream", "Refetch init oneshot dropped");
-                    actor_address.do_send(InternalProcessingComplete {
-                        result: Err(NorppaliveError::Other(
-                            "Refetch init oneshot dropped".to_string(),
-                        )),
-                    });
                 }
             }
         });
