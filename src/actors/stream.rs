@@ -155,15 +155,32 @@ impl StreamActor {
             return Ok(stream_url.to_string());
         }
 
+        // yt-dlp always rewrites the --cookies file on exit; the SealedSecret mount is
+        // read-only, so copy into writable scratch first.
+        const RUNTIME_COOKIES: &str = "/tmp/yt-cookies-runtime.txt";
         let mut args: Vec<&str> = vec!["-f", "best[height<=720]"];
-        if let Some(path) = CONFIG.stream.cookies_path.as_deref() {
-            if std::path::Path::new(path).exists() {
-                args.extend(["--cookies", path]);
+        if let Some(src) = CONFIG.stream.cookies_path.as_deref() {
+            if std::path::Path::new(src).exists() {
+                match std::fs::copy(src, RUNTIME_COOKIES).and_then(|_| {
+                    std::fs::set_permissions(
+                        RUNTIME_COOKIES,
+                        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(
+                            0o600,
+                        ),
+                    )
+                }) {
+                    Ok(_) => args.extend(["--cookies", RUNTIME_COOKIES]),
+                    Err(e) => error!(
+                        target: "stream",
+                        "failed to stage cookies from {} to {}: {}; running yt-dlp without --cookies",
+                        src, RUNTIME_COOKIES, e
+                    ),
+                }
             } else {
                 info!(
                     target: "stream",
                     "stream.cookies_path is set ({}) but the file does not exist; running yt-dlp without --cookies",
-                    path
+                    src
                 );
             }
         }
