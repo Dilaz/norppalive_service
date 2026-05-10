@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::utils::bluesky_facets::build_facets;
+use crate::utils::bluesky_media::image_aspect_ratio_ipld;
 use crate::{config::CONFIG, error::NorppaliveError};
 
 use super::SocialMediaService;
@@ -101,10 +102,14 @@ impl SocialMediaService for BlueskyService {
 
                     // The app.bsky.embed.images#image object (no $type)
                     let image_object_for_array = Ipld::Map({
-                        std::collections::BTreeMap::from([
+                        let mut fields = std::collections::BTreeMap::from([
                             ("alt".to_string(), Ipld::String("".to_string())),
                             ("image".to_string(), actual_blob_ipld),
-                        ])
+                        ]);
+                        if let Some(ratio) = image_aspect_ratio_ipld(image_path) {
+                            fields.insert("aspectRatio".to_string(), ratio);
+                        }
+                        fields
                     });
 
                     let images_list = Ipld::List(vec![image_object_for_array]);

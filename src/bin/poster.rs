@@ -7,12 +7,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use atrium_api::{
     agent::{atp_agent::store::MemorySessionStore, atp_agent::AtpAgent},
     com::atproto::repo::create_record::InputData,
     types::{
-        string::{AtIdentifier, Handle, Nsid},
+        string::{AtIdentifier, Did, Handle, Nsid},
         BlobRef, DataModel, Object, TypedBlobRef, Unknown,
     },
 };
@@ -21,19 +22,31 @@ use clap::Parser;
 use ipld_core::ipld::Ipld;
 use miette::Result;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tokio::time::Instant;
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use norppalive_service::config::{Service, CONFIG};
 use norppalive_service::error::NorppaliveError;
-use norppalive_service::utils::bluesky_facets::build_facets;
 use norppalive_service::services::{KafkaService, MastodonService, SocialMediaService};
+use norppalive_service::utils::bluesky_facets::build_facets;
+use norppalive_service::utils::bluesky_media::{
+    image_aspect_ratio_ipld, video_aspect_ratio_ipld,
+};
 
 const BLUESKY_COLLECTION_POST: &str = "app.bsky.feed.post";
 const BLUESKY_COLLECTION_IMAGES: &str = "app.bsky.embed.images";
 const BLUESKY_COLLECTION_VIDEO: &str = "app.bsky.embed.video";
 const BLUESKY_BLOB_TYPE: &str = "blob";
+
+// Bluesky video service. Uploads must go through this host with a service
+// auth JWT issued by the user's PDS (the regular upload_blob path doesn't
+// register the file with the transcoder, so the video player can't load it).
+const VIDEO_SERVICE_HOST: &str = "https://video.bsky.app";
+const VIDEO_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+const VIDEO_PROCESSING_TIMEOUT: Duration = Duration::from_secs(300);
+const VIDEO_PROCESSING_POLL_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Mirrors `MAX_IMAGE_BASE64_LEN` in `norppalive-discord/src/actors/discord.rs`.
 /// Payloads larger than this are dropped by the bot.
@@ -383,60 +396,86 @@ async fn post_to_bluesky(
     info!("Logged in to Bluesky");
 
     let embed_ipld = if let Some((path, kind)) = media {
-        let bytes = std::fs::read(path)?;
-        let upload = {
-            let g = agent.lock().await;
-            g.api.com.atproto.repo.upload_blob(bytes).await?
-        };
-
-        let (cid, mime_type, size) = match &upload.blob {
-            BlobRef::Typed(TypedBlobRef::Blob(b)) => {
-                (b.r#ref.0.to_string(), b.mime_type.clone(), b.size)
-            }
-            BlobRef::Untyped(_) => {
-                return Err(NorppaliveError::Other(
-                    "Bluesky blob upload did not return a typed blob with size".into(),
-                ));
-            }
-        };
-        info!(
-            "Uploaded blob to Bluesky (mime={}, size={} bytes)",
-            mime_type, size
-        );
-
-        let blob_ipld = Ipld::Map(BTreeMap::from([
-            ("$type".into(), Ipld::String(BLUESKY_BLOB_TYPE.into())),
-            ("size".into(), Ipld::Integer(size as i128)),
-            (
-                "ref".into(),
-                Ipld::Map(BTreeMap::from([("$link".into(), Ipld::String(cid))])),
-            ),
-            ("mimeType".into(), Ipld::String(mime_type)),
-        ]));
-
-        Some(match kind {
+        match kind {
             MediaKind::Image => {
-                let image_object = Ipld::Map(BTreeMap::from([
+                let bytes = std::fs::read(path)?;
+                let upload = {
+                    let g = agent.lock().await;
+                    g.api.com.atproto.repo.upload_blob(bytes).await?
+                };
+                let (cid, mime_type, size) = match &upload.blob {
+                    BlobRef::Typed(TypedBlobRef::Blob(b)) => {
+                        (b.r#ref.0.to_string(), b.mime_type.clone(), b.size)
+                    }
+                    BlobRef::Untyped(_) => {
+                        return Err(NorppaliveError::Other(
+                            "Bluesky blob upload did not return a typed blob with size".into(),
+                        ));
+                    }
+                };
+                info!(
+                    "Uploaded image blob to Bluesky (mime={}, size={} bytes)",
+                    mime_type, size
+                );
+
+                let blob_ipld = Ipld::Map(BTreeMap::from([
+                    ("$type".into(), Ipld::String(BLUESKY_BLOB_TYPE.into())),
+                    ("size".into(), Ipld::Integer(size as i128)),
+                    (
+                        "ref".into(),
+                        Ipld::Map(BTreeMap::from([("$link".into(), Ipld::String(cid))])),
+                    ),
+                    ("mimeType".into(), Ipld::String(mime_type)),
+                ]));
+
+                let mut image_fields = BTreeMap::from([
                     ("alt".into(), Ipld::String(alt_text.into())),
                     ("image".into(), blob_ipld),
-                ]));
-                Ipld::Map(BTreeMap::from([
+                ]);
+                if let Some(ratio) =
+                    image_aspect_ratio_ipld(path.to_string_lossy().as_ref())
+                {
+                    image_fields.insert("aspectRatio".into(), ratio);
+                }
+                let image_object = Ipld::Map(image_fields);
+
+                Some(Ipld::Map(BTreeMap::from([
                     (
                         "$type".into(),
                         Ipld::String(BLUESKY_COLLECTION_IMAGES.into()),
                     ),
                     ("images".into(), Ipld::List(vec![image_object])),
-                ]))
+                ])))
             }
-            MediaKind::Video => Ipld::Map(BTreeMap::from([
-                (
-                    "$type".into(),
-                    Ipld::String(BLUESKY_COLLECTION_VIDEO.into()),
-                ),
-                ("video".into(), blob_ipld),
-                ("alt".into(), Ipld::String(alt_text.into())),
-            ])),
-        })
+            MediaKind::Video => {
+                let (cid, mime_type, size) = upload_video_to_bsky(&agent, path).await?;
+                info!(
+                    "Bluesky video processed (mime={}, size={} bytes)",
+                    mime_type, size
+                );
+                let blob_ipld = Ipld::Map(BTreeMap::from([
+                    ("$type".into(), Ipld::String(BLUESKY_BLOB_TYPE.into())),
+                    ("size".into(), Ipld::Integer(size as i128)),
+                    (
+                        "ref".into(),
+                        Ipld::Map(BTreeMap::from([("$link".into(), Ipld::String(cid))])),
+                    ),
+                    ("mimeType".into(), Ipld::String(mime_type)),
+                ]));
+                let mut video_fields = BTreeMap::from([
+                    (
+                        "$type".into(),
+                        Ipld::String(BLUESKY_COLLECTION_VIDEO.into()),
+                    ),
+                    ("video".into(), blob_ipld),
+                    ("alt".into(), Ipld::String(alt_text.into())),
+                ]);
+                if let Some(ratio) = video_aspect_ratio_ipld(path) {
+                    video_fields.insert("aspectRatio".into(), ratio);
+                }
+                Some(Ipld::Map(video_fields))
+            }
+        }
     } else {
         None
     };
@@ -479,6 +518,306 @@ async fn post_to_bluesky(
         .await?;
     info!("Posted to Bluesky: {}", res.uri);
     Ok(())
+}
+
+// Mints a service-auth JWT scoped to a single XRPC method (`lxm`).
+// Despite the call going to the Bluesky video service, the `aud` must be the
+// user's PDS DID — the video service then verifies the JWT by checking that
+// the PDS issued it for the right method.
+async fn mint_video_service_token(
+    agent: &Arc<Mutex<AtpAgent<MemorySessionStore, ReqwestClient>>>,
+    pds_did: &str,
+    lxm: &str,
+) -> std::result::Result<String, NorppaliveError> {
+    let aud = Did::new(pds_did.to_string())
+        .map_err(|e| NorppaliveError::Other(format!("Invalid PDS DID '{pds_did}': {e}")))?;
+    let lxm_nsid = Nsid::new(lxm.to_string())
+        .map_err(|e| NorppaliveError::Other(format!("Invalid lxm '{lxm}': {e}")))?;
+    let g = agent.lock().await;
+    let res = g
+        .api
+        .com
+        .atproto
+        .server
+        .get_service_auth(
+            atrium_api::com::atproto::server::get_service_auth::ParametersData {
+                aud,
+                exp: None,
+                lxm: Some(lxm_nsid),
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| NorppaliveError::Other(format!("getServiceAuth ({lxm}) failed: {e}")))?;
+    Ok(res.token.clone())
+}
+
+// Derives a `did:web:<host>` DID from the agent's current PDS endpoint URL.
+fn pds_did_from_endpoint(endpoint: &str) -> Result<String, NorppaliveError> {
+    let host = endpoint
+        .strip_prefix("https://")
+        .or_else(|| endpoint.strip_prefix("http://"))
+        .unwrap_or(endpoint)
+        .trim_end_matches('/');
+    let host = host.split('/').next().unwrap_or("");
+    if host.is_empty() {
+        return Err(NorppaliveError::Other(format!(
+            "Could not derive PDS host from endpoint '{endpoint}'"
+        )));
+    }
+    Ok(format!("did:web:{host}"))
+}
+
+fn video_mime_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("mp4" | "m4v") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("webm") => "video/webm",
+        Some("mkv") => "video/x-matroska",
+        Some("avi") => "video/x-msvideo",
+        _ => "video/mp4",
+    }
+}
+
+// Uploads a video through the Bluesky video service: mints a service-auth
+// JWT, POSTs the bytes to `app.bsky.video.uploadVideo`, then polls
+// `app.bsky.video.getJobStatus` until the transcode finishes. Returns the
+// (cid, mime_type, size) of the resulting blob, suitable for embedding.
+async fn upload_video_to_bsky(
+    agent: &Arc<Mutex<AtpAgent<MemorySessionStore, ReqwestClient>>>,
+    path: &Path,
+) -> std::result::Result<(String, String, usize), NorppaliveError> {
+    let (user_did, pds_endpoint) = {
+        let g = agent.lock().await;
+        let session = g.get_session().await.ok_or_else(|| {
+            NorppaliveError::Other("Bluesky session missing — call login first".into())
+        })?;
+        (
+            session.data.did.as_str().to_string(),
+            g.get_endpoint().await,
+        )
+    };
+    let pds_did = pds_did_from_endpoint(&pds_endpoint)?;
+    debug!("Bluesky PDS endpoint={} pds_did={}", pds_endpoint, pds_did);
+
+    let bytes = std::fs::read(path)?;
+    let size = bytes.len();
+    let mime = video_mime_for_path(path);
+    let name = format!(
+        "{}-{}.mp4",
+        chrono::Utc::now().timestamp_millis(),
+        rand::random::<u32>()
+    );
+
+    info!(
+        "Uploading video to Bluesky video service (size={} bytes, mime={})",
+        size, mime
+    );
+
+    // The Bluesky video service treats the incoming upload as a blob upload
+    // at the auth layer, so the PDS-issued JWT must be scoped to
+    // com.atproto.repo.uploadBlob (not app.bsky.video.uploadVideo).
+    let upload_token =
+        mint_video_service_token(agent, &pds_did, "com.atproto.repo.uploadBlob").await?;
+
+    let http = reqwest::Client::builder()
+        .timeout(VIDEO_UPLOAD_TIMEOUT)
+        .user_agent("norppalive-poster/0.1 (+https://github.com/norppalive)")
+        .build()
+        .map_err(|e| NorppaliveError::Other(format!("reqwest build failed: {e}")))?;
+
+    let upload_url = format!("{}/xrpc/app.bsky.video.uploadVideo", VIDEO_SERVICE_HOST);
+    let mut last_err: Option<String> = None;
+    let (upload_status, upload_body) = 'upload: loop {
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            let resp = http
+                .post(&upload_url)
+                .query(&[("did", user_did.as_str()), ("name", name.as_str())])
+                .bearer_auth(&upload_token)
+                .header("Content-Type", mime)
+                .body(bytes.clone())
+                .send()
+                .await;
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    let body = r.text().await.map_err(|e| {
+                        NorppaliveError::Other(format!("uploadVideo body read failed: {e}"))
+                    })?;
+                    // Retry only on transient gateway errors. Anything else
+                    // (incl. 4xx with a jobStatus body) we let the parser deal
+                    // with so we surface real errors to the caller.
+                    let is_transient = matches!(status.as_u16(), 502 | 503 | 504);
+                    if is_transient && attempt < 3 {
+                        warn!(
+                            "uploadVideo got {} from CDN (attempt {}/3); retrying in {:?}",
+                            status, attempt, VIDEO_PROCESSING_POLL_INTERVAL
+                        );
+                        last_err = Some(format!("{status}: {body}"));
+                        tokio::time::sleep(VIDEO_PROCESSING_POLL_INTERVAL).await;
+                        continue;
+                    }
+                    break 'upload (status, body);
+                }
+                Err(e) => {
+                    if attempt < 3 {
+                        warn!(
+                            "uploadVideo network error (attempt {}/3): {}; retrying",
+                            attempt, e
+                        );
+                        last_err = Some(e.to_string());
+                        tokio::time::sleep(VIDEO_PROCESSING_POLL_INTERVAL).await;
+                        continue;
+                    }
+                    return Err(NorppaliveError::Other(format!(
+                        "uploadVideo request failed after retries: {e} (last_err={:?})",
+                        last_err
+                    )));
+                }
+            }
+        }
+    };
+
+    // Bluesky's response shape varies: success wraps fields under `jobStatus`,
+    // but 409 already_exists (same content hash uploaded before) returns a
+    // flat `{jobId, state, error, message}`. Try nested first, fall back to
+    // flat. In either case, having a jobId means we can resume by polling
+    // getJobStatus — even already_exists is recoverable.
+    let upload_json: serde_json::Value = serde_json::from_str(&upload_body).map_err(|e| {
+        NorppaliveError::Other(format!(
+            "uploadVideo returned non-JSON ({}): {} — body: {}",
+            upload_status, e, upload_body
+        ))
+    })?;
+    let nested = upload_json.get("jobStatus");
+    let extract_str = |key: &str| -> Option<String> {
+        nested
+            .and_then(|j| j.get(key))
+            .or_else(|| upload_json.get(key))
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+    };
+    let job_id = extract_str("jobId").ok_or_else(|| {
+        NorppaliveError::Other(format!(
+            "uploadVideo {} response missing jobId: {}",
+            upload_status, upload_body
+        ))
+    })?;
+
+    if !upload_status.is_success() {
+        let err = extract_str("error").unwrap_or_default();
+        let msg = extract_str("message").unwrap_or_default();
+        warn!(
+            "Bluesky uploadVideo returned {} ({} {}) but jobId {} was issued; polling for blob",
+            upload_status, err, msg, job_id
+        );
+    } else {
+        debug!("Bluesky uploadVideo job started: {}", job_id);
+    }
+
+    let status_token =
+        mint_video_service_token(agent, &pds_did, "app.bsky.video.getJobStatus").await?;
+    let status_url = format!("{}/xrpc/app.bsky.video.getJobStatus", VIDEO_SERVICE_HOST);
+    let deadline = Instant::now() + VIDEO_PROCESSING_TIMEOUT;
+
+    loop {
+        let res = http
+            .get(&status_url)
+            .query(&[("jobId", job_id.as_str())])
+            .bearer_auth(&status_token)
+            .send()
+            .await
+            .map_err(|e| {
+                NorppaliveError::Other(format!("getJobStatus request failed: {e}"))
+            })?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(NorppaliveError::Other(format!(
+                "Bluesky getJobStatus {}: {}",
+                status, body
+            )));
+        }
+
+        let json: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| NorppaliveError::Other(format!("getJobStatus parse: {e}")))?;
+        let job = json
+            .get("jobStatus")
+            .ok_or_else(|| NorppaliveError::Other("getJobStatus missing jobStatus".into()))?;
+        let state = job
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("UNKNOWN");
+
+        match state {
+            "JOB_STATE_COMPLETED" => {
+                let blob = job.get("blob").ok_or_else(|| {
+                    NorppaliveError::Other(
+                        "Bluesky video job completed without a blob ref".into(),
+                    )
+                })?;
+                let cid = blob
+                    .get("ref")
+                    .and_then(|r| r.get("$link"))
+                    .and_then(|s| s.as_str())
+                    .ok_or_else(|| {
+                        NorppaliveError::Other(
+                            "Bluesky video blob missing ref.$link".into(),
+                        )
+                    })?
+                    .to_string();
+                let mime_type = blob
+                    .get("mimeType")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("video/mp4")
+                    .to_string();
+                let blob_size = blob
+                    .get("size")
+                    .and_then(|s| s.as_u64())
+                    .ok_or_else(|| {
+                        NorppaliveError::Other("Bluesky video blob missing size".into())
+                    })? as usize;
+                return Ok((cid, mime_type, blob_size));
+            }
+            "JOB_STATE_FAILED" => {
+                let err = job
+                    .get("error")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("unknown error");
+                let msg = job
+                    .get("message")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                return Err(NorppaliveError::Other(format!(
+                    "Bluesky video processing failed: {err} {msg}"
+                )));
+            }
+            other => {
+                if Instant::now() >= deadline {
+                    return Err(NorppaliveError::Other(format!(
+                        "Bluesky video processing timed out (last state: {other})"
+                    )));
+                }
+                let progress = job
+                    .get("progress")
+                    .and_then(|p| p.as_u64())
+                    .map(|p| format!(" ({p}%)"))
+                    .unwrap_or_default();
+                debug!("Bluesky video job state: {other}{progress}; polling again");
+                tokio::time::sleep(VIDEO_PROCESSING_POLL_INTERVAL).await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
