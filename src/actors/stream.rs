@@ -32,6 +32,23 @@ const MAX_STREAM_ERRORS: u32 = 10;
 const MAX_STREAM_RUNTIME: Duration = Duration::from_secs(3600); // Max 1 hour runtime
 const STREAM_RUNNING_CHECK_INTERVAL: Duration = Duration::from_secs(30); // Check every 30 seconds
 
+#[allow(dead_code)]
+const MAX_CONSECUTIVE_REFETCH_FAILURES: u32 = 10;
+
+/// Backoff delay for a given consecutive-failure attempt number (1-indexed).
+/// Capped at 5 minutes for attempt 6 and above.
+#[allow(dead_code)]
+fn backoff_for(attempt: u32) -> Duration {
+    match attempt {
+        0 | 1 => Duration::from_secs(5),
+        2 => Duration::from_secs(15),
+        3 => Duration::from_secs(30),
+        4 => Duration::from_secs(60),
+        5 => Duration::from_secs(120),
+        _ => Duration::from_secs(300),
+    }
+}
+
 /// StreamActor handles video stream processing and frame extraction
 #[derive(Default)]
 pub struct StreamActor {
@@ -885,5 +902,28 @@ impl Handler<ActorRestarted> for StreamActor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_schedule_matches_design() {
+        assert_eq!(backoff_for(1), Duration::from_secs(5));
+        assert_eq!(backoff_for(2), Duration::from_secs(15));
+        assert_eq!(backoff_for(3), Duration::from_secs(30));
+        assert_eq!(backoff_for(4), Duration::from_secs(60));
+        assert_eq!(backoff_for(5), Duration::from_secs(120));
+        assert_eq!(backoff_for(6), Duration::from_secs(300));
+        assert_eq!(backoff_for(7), Duration::from_secs(300));
+        assert_eq!(backoff_for(50), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn backoff_attempt_zero_is_five_seconds() {
+        // Safety net: even if caller passes 0, we don't return a zero-duration.
+        assert_eq!(backoff_for(0), Duration::from_secs(5));
     }
 }
