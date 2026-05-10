@@ -75,6 +75,25 @@ fn parse_yt_dlp_resolve_output(stdout: &str) -> Result<ResolvedStream, Norppaliv
     Ok(ResolvedStream { url, is_live })
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndAction {
+    Refetch,
+    Shutdown,
+}
+
+/// What to do when a stream session ends.
+/// `is_live` is the current liveness of the source.
+/// `was_clean` is true if the session ended without an FFmpeg/decoder error.
+#[allow(dead_code)]
+fn decide_after_session_end(is_live: bool, _was_clean: bool) -> EndAction {
+    if is_live {
+        EndAction::Refetch
+    } else {
+        EndAction::Shutdown
+    }
+}
+
 /// StreamActor handles video stream processing and frame extraction
 #[derive(Default)]
 pub struct StreamActor {
@@ -996,5 +1015,21 @@ mod tests {
         let r = parse_yt_dlp_resolve_output("  https://x/y  \n  True  \n").expect("parse ok");
         assert_eq!(r.url, "https://x/y");
         assert!(r.is_live);
+    }
+
+    #[test]
+    fn decide_live_ok_means_refetch() {
+        assert_eq!(decide_after_session_end(true, true), EndAction::Refetch);
+    }
+
+    #[test]
+    fn decide_live_err_means_refetch() {
+        assert_eq!(decide_after_session_end(true, false), EndAction::Refetch);
+    }
+
+    #[test]
+    fn decide_non_live_means_shutdown() {
+        assert_eq!(decide_after_session_end(false, true), EndAction::Shutdown);
+        assert_eq!(decide_after_session_end(false, false), EndAction::Shutdown);
     }
 }
