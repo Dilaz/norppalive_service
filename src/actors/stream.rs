@@ -49,6 +49,32 @@ fn backoff_for(attempt: u32) -> Duration {
     }
 }
 
+/// Result of resolving an input URL via yt-dlp.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedStream {
+    pub url: String,
+    pub is_live: bool,
+}
+
+/// Parse the stdout of `yt-dlp --print url --print is_live <input>`.
+///
+/// Expected layout: two lines, URL on the first, `True`/`False`/`NA` on the second.
+/// A single line is accepted as URL with `is_live = false` (defensive default).
+/// Empty input is an error.
+#[allow(dead_code)]
+fn parse_yt_dlp_resolve_output(stdout: &str) -> Result<ResolvedStream, NorppaliveError> {
+    let mut lines = stdout.lines().map(str::trim).filter(|s| !s.is_empty());
+    let url = lines
+        .next()
+        .ok_or_else(|| {
+            NorppaliveError::StreamUrlError("yt-dlp returned no URL line".to_string())
+        })?
+        .to_string();
+    let is_live = matches!(lines.next(), Some("True"));
+    Ok(ResolvedStream { url, is_live })
+}
+
 /// StreamActor handles video stream processing and frame extraction
 #[derive(Default)]
 pub struct StreamActor {
@@ -925,5 +951,50 @@ mod tests {
     fn backoff_attempt_zero_is_five_seconds() {
         // Safety net: even if caller passes 0, we don't return a zero-duration.
         assert_eq!(backoff_for(0), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn parse_yt_dlp_two_lines_true() {
+        let out = "https://cdn.example.com/segment\nTrue\n";
+        let r = parse_yt_dlp_resolve_output(out).expect("parse ok");
+        assert_eq!(r.url, "https://cdn.example.com/segment");
+        assert!(r.is_live);
+    }
+
+    #[test]
+    fn parse_yt_dlp_two_lines_false() {
+        let out = "https://cdn.example.com/segment\nFalse\n";
+        let r = parse_yt_dlp_resolve_output(out).expect("parse ok");
+        assert_eq!(r.url, "https://cdn.example.com/segment");
+        assert!(!r.is_live);
+    }
+
+    #[test]
+    fn parse_yt_dlp_na_is_not_live() {
+        let out = "https://cdn.example.com/file.mp4\nNA\n";
+        let r = parse_yt_dlp_resolve_output(out).expect("parse ok");
+        assert!(!r.is_live);
+    }
+
+    #[test]
+    fn parse_yt_dlp_empty_is_error() {
+        assert!(parse_yt_dlp_resolve_output("").is_err());
+        assert!(parse_yt_dlp_resolve_output("\n").is_err());
+    }
+
+    #[test]
+    fn parse_yt_dlp_single_line_treated_as_url_not_live() {
+        // Defensive: if yt-dlp omits the is_live print for some reason,
+        // we still get a URL but assume not-live (safer default).
+        let r = parse_yt_dlp_resolve_output("https://x/y\n").expect("parse ok");
+        assert_eq!(r.url, "https://x/y");
+        assert!(!r.is_live);
+    }
+
+    #[test]
+    fn parse_yt_dlp_strips_whitespace() {
+        let r = parse_yt_dlp_resolve_output("  https://x/y  \n  True  \n").expect("parse ok");
+        assert_eq!(r.url, "https://x/y");
+        assert!(r.is_live);
     }
 }
