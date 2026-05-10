@@ -30,7 +30,7 @@ spec:
         - name: yt-cookies
           secret:
             secretName: norppalive-yt-cookies
-            defaultMode: 0400
+            defaultMode: 0444
             items:
               - key: cookies.txt
                 path: cookies.txt
