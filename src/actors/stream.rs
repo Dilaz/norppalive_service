@@ -50,7 +50,6 @@ fn backoff_for(attempt: u32) -> Duration {
 }
 
 /// Result of resolving an input URL via yt-dlp.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedStream {
     pub url: String,
@@ -62,7 +61,6 @@ pub struct ResolvedStream {
 /// Expected layout: two lines, URL on the first, `True`/`False`/`NA` on the second.
 /// A single line is accepted as URL with `is_live = false` (defensive default).
 /// Empty input is an error.
-#[allow(dead_code)]
 fn parse_yt_dlp_resolve_output(stdout: &str) -> Result<ResolvedStream, NorppaliveError> {
     let mut lines = stdout.lines().map(str::trim).filter(|s| !s.is_empty());
     let url = lines
@@ -212,9 +210,12 @@ impl StreamActor {
     }
 
     /// Get the stream URL with yt-dlp if it's a YouTube URL
-    fn get_stream_url(stream_url: &str) -> Result<String, NorppaliveError> {
+    fn get_stream_url(stream_url: &str) -> Result<ResolvedStream, NorppaliveError> {
         if !stream_url.starts_with("http") {
-            return Ok(stream_url.to_string());
+            return Ok(ResolvedStream {
+                url: stream_url.to_string(),
+                is_live: false,
+            });
         }
 
         // yt-dlp always rewrites the --cookies file on exit; the SealedSecret mount is
@@ -246,28 +247,37 @@ impl StreamActor {
                 );
             }
         }
-        args.extend(["-g", stream_url]);
+        // --print replaces -g; two prints gives us two stdout lines.
+        args.extend(["--print", "url", "--print", "is_live", stream_url]);
 
         let output_result = Command::new("yt-dlp").args(&args).output();
 
         match output_result {
             Ok(output) => {
-                let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if url.is_empty() {
-                    let stderr_output = String::from_utf8_lossy(&output.stderr);
-                    error!(
-                        target: "stream",
-                        "Failed to get stream URL with yt-dlp for {}. yt-dlp stderr: {}",
-                        stream_url,
-                        stderr_output
-                    );
-                    Err(NorppaliveError::StreamUrlError(format!(
-                        "yt-dlp failed for {}: {}",
-                        stream_url,
-                        stderr_output.trim()
-                    )))
-                } else {
-                    Ok(url)
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                match parse_yt_dlp_resolve_output(&stdout) {
+                    Ok(resolved) => {
+                        info!(
+                            target: "stream",
+                            "yt-dlp resolved {} (is_live={})",
+                            stream_url, resolved.is_live
+                        );
+                        Ok(resolved)
+                    }
+                    Err(_) => {
+                        error!(
+                            target: "stream",
+                            "yt-dlp returned no URL for {}. stderr: {}",
+                            stream_url,
+                            stderr
+                        );
+                        Err(NorppaliveError::StreamUrlError(format!(
+                            "yt-dlp failed for {}: {}",
+                            stream_url,
+                            stderr.trim()
+                        )))
+                    }
                 }
             }
             Err(e) => {
@@ -323,9 +333,9 @@ impl StreamActor {
         ffmpeg::log::set_level(ffmpeg::log::Level::Quiet);
 
         // Resolve the actual stream URL (may need yt-dlp for YouTube URLs)
-        let actual_url = if stream_url.starts_with("https://") {
+        let resolved = if stream_url.starts_with("https://") {
             match Self::get_stream_url(&stream_url) {
-                Ok(url) => url,
+                Ok(r) => r,
                 Err(e) => {
                     error!(target: "stream", "Failed to get stream URL: {}", e);
                     Self::send_init_status(init_sender.take(), &Err(e.clone_for_error_reporting()));
@@ -333,8 +343,13 @@ impl StreamActor {
                 }
             }
         } else {
-            stream_url
+            ResolvedStream {
+                url: stream_url,
+                is_live: false,
+            }
         };
+        let actual_url = resolved.url;
+        // `resolved.is_live` is not used yet; Task 5 wires it to the actor state.
 
         info!(target: "stream", "Attempting to open FFmpeg input for URL: {}", actual_url);
         let ictx = match input(&actual_url) {
