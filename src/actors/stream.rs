@@ -15,7 +15,7 @@ use crate::error::NorppaliveError;
 use crate::messages::supervisor::{ActorRestarted, SubscribeToRestarts, SystemShutdown};
 use crate::messages::{
     DetectorReady, FrameExtracted, GracefulStop, InternalProcessingComplete, LatestFrameAvailable,
-    ProcessFrame, StartStream, StopStream,
+    ProcessFrame, RefetchAndRestart, StartStream, StopStream,
 };
 
 // Production FFmpeg imports
@@ -32,12 +32,10 @@ const MAX_STREAM_ERRORS: u32 = 10;
 const MAX_STREAM_RUNTIME: Duration = Duration::from_secs(3600); // Max 1 hour runtime
 const STREAM_RUNNING_CHECK_INTERVAL: Duration = Duration::from_secs(30); // Check every 30 seconds
 
-#[allow(dead_code)]
 const MAX_CONSECUTIVE_REFETCH_FAILURES: u32 = 10;
 
 /// Backoff delay for a given consecutive-failure attempt number (1-indexed).
 /// Capped at 5 minutes for attempt 6 and above.
-#[allow(dead_code)]
 fn backoff_for(attempt: u32) -> Duration {
     match attempt {
         0 | 1 => Duration::from_secs(5),
@@ -73,7 +71,6 @@ fn parse_yt_dlp_resolve_output(stdout: &str) -> Result<ResolvedStream, Norppaliv
     Ok(ResolvedStream { url, is_live })
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EndAction {
     Refetch,
@@ -83,7 +80,6 @@ enum EndAction {
 /// What to do when a stream session ends.
 /// `is_live` is the current liveness of the source.
 /// `was_clean` is true if the session ended without an FFmpeg/decoder error.
-#[allow(dead_code)]
 fn decide_after_session_end(is_live: bool, _was_clean: bool) -> EndAction {
     if is_live {
         EndAction::Refetch
@@ -105,14 +101,12 @@ pub struct StreamActor {
     is_processing_task_running: bool,
     processing_task_handle: Option<JoinHandle<()>>,
     /// True if the most recently resolved source is a livestream. Set via the
-    /// init oneshot's success payload and used by Task 6 to decide whether to
-    /// refetch on session end.
-    #[allow(dead_code)]
+    /// init oneshot's success payload and used to decide whether to refetch on
+    /// session end.
     is_livestream: bool,
     /// Number of consecutive failed refetch attempts. Reset to 0 on a
-    /// successful session start (via `SessionStarted`). Used by Task 6 to
-    /// drive the backoff schedule and the giveup cap.
-    #[allow(dead_code)]
+    /// successful session start (via `SessionStarted`). Drives the backoff
+    /// schedule and the giveup cap.
     consecutive_refetch_failures: u32,
 }
 
@@ -919,26 +913,109 @@ impl Handler<LatestFrameAvailable> for StreamActor {
 impl Handler<InternalProcessingComplete> for StreamActor {
     type Result = ();
 
-    fn handle(&mut self, msg: InternalProcessingComplete, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: InternalProcessingComplete, ctx: &mut Context<Self>) {
         info!(target: "stream", "Internal FFmpeg processing task reported completion.");
         self.is_processing_task_running = false;
-        self.running = false; // Also update the general running flag for the stream
-        self.processing_task_handle = None; // Clear the task handle
+        self.running = false;
+        self.processing_task_handle = None;
 
-        if let Err(e) = msg.result {
-            error!(target: "stream", "Stream processing task failed: {}. Requesting system shutdown immediately.", e);
-            if let Some(sup_actor) = &self.supervisor_actor {
-                sup_actor.do_send(SystemShutdown);
-            } else {
-                error!(target: "stream", "Supervisor actor not available to request shutdown after stream processing error.");
-                // Fallback for critical error
-                // ctx.stop();
-                // System::current().stop();
-            }
-        } else {
-            info!(target: "stream", "Stream source exhausted or task completed. Checking if all frames are processed before shutdown.");
-            self.check_and_initiate_shutdown_if_all_done(ctx);
+        let was_clean = msg.result.is_ok();
+        if let Err(ref e) = msg.result {
+            error!(target: "stream", "Stream processing task failed: {}", e);
         }
+
+        match decide_after_session_end(self.is_livestream, was_clean) {
+            EndAction::Refetch => {
+                self.consecutive_refetch_failures =
+                    self.consecutive_refetch_failures.saturating_add(1);
+                if self.consecutive_refetch_failures > MAX_CONSECUTIVE_REFETCH_FAILURES {
+                    error!(
+                        target: "stream",
+                        "Reached {} consecutive refetch failures; giving up and shutting down.",
+                        MAX_CONSECUTIVE_REFETCH_FAILURES
+                    );
+                    if let Some(sup) = &self.supervisor_actor {
+                        sup.do_send(SystemShutdown);
+                    }
+                    return;
+                }
+                let delay = backoff_for(self.consecutive_refetch_failures);
+                info!(
+                    target: "stream",
+                    "Livestream session ended (clean={}); refetching in {:?} (attempt {}/{})",
+                    was_clean,
+                    delay,
+                    self.consecutive_refetch_failures,
+                    MAX_CONSECUTIVE_REFETCH_FAILURES
+                );
+                ctx.run_later(delay, |_a, c| {
+                    c.address().do_send(RefetchAndRestart);
+                });
+            }
+            EndAction::Shutdown => {
+                if was_clean {
+                    info!(
+                        target: "stream",
+                        "Stream source exhausted (not a livestream). Checking if all frames are processed before shutdown."
+                    );
+                    self.check_and_initiate_shutdown_if_all_done(ctx);
+                } else {
+                    info!(target: "stream", "Requesting system shutdown after non-livestream error.");
+                    if let Some(sup) = &self.supervisor_actor {
+                        sup.do_send(SystemShutdown);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Handler<RefetchAndRestart> for StreamActor {
+    type Result = ();
+
+    fn handle(&mut self, _msg: RefetchAndRestart, ctx: &mut Context<Self>) {
+        let Some(url) = self.stream_url.clone() else {
+            error!(target: "stream", "RefetchAndRestart fired but no stream_url cached; shutting down.");
+            if let Some(sup) = &self.supervisor_actor {
+                sup.do_send(SystemShutdown);
+            }
+            return;
+        };
+
+        info!(target: "stream", "Refetching stream URL: {}", url);
+
+        // Reset session-local state, then re-enter start_stream_processing.
+        // The init oneshot will report is_live on success; SessionStarted updates
+        // the counter (resets to 0 on success).
+        self.latest_frame_buffer = None;
+        self.detector_ready = true;
+        self.is_processing_task_running = false;
+
+        let (tx, rx) = oneshot::channel::<Result<bool, NorppaliveError>>();
+        self.start_stream_processing(ctx, url, tx);
+
+        let actor_address = ctx.address();
+        actix::spawn(async move {
+            match rx.await {
+                Ok(Ok(is_live)) => {
+                    actor_address.do_send(SessionStarted { is_live });
+                }
+                Ok(Err(e)) => {
+                    error!(target: "stream", "Refetch init failed: {}", e);
+                    // Treat as a session-end with error so the existing branching
+                    // handles backoff + cap uniformly.
+                    actor_address.do_send(InternalProcessingComplete { result: Err(e) });
+                }
+                Err(_) => {
+                    error!(target: "stream", "Refetch init oneshot dropped");
+                    actor_address.do_send(InternalProcessingComplete {
+                        result: Err(NorppaliveError::Other(
+                            "Refetch init oneshot dropped".to_string(),
+                        )),
+                    });
+                }
+            }
+        });
     }
 }
 
@@ -1086,5 +1163,10 @@ mod tests {
     fn decide_non_live_means_shutdown() {
         assert_eq!(decide_after_session_end(false, true), EndAction::Shutdown);
         assert_eq!(decide_after_session_end(false, false), EndAction::Shutdown);
+    }
+
+    #[test]
+    fn refetch_failure_cap_constant_matches_design() {
+        assert_eq!(MAX_CONSECUTIVE_REFETCH_FAILURES, 10);
     }
 }

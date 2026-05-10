@@ -42,3 +42,9 @@ pub struct DetectorReady;
 pub struct InternalProcessingComplete {
     pub result: Result<(), NorppaliveError>,
 }
+
+/// Internal: scheduled by StreamActor after a livestream session ends; triggers a yt-dlp
+/// re-resolve and a new FFmpeg session against the same configured URL.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RefetchAndRestart;
