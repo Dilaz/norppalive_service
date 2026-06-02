@@ -15,6 +15,9 @@ spec:
       labels:
         app: norppalive-service
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: norppalive-service
           image: norppalive-service:latest
